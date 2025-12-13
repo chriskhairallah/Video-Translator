@@ -423,8 +423,14 @@ def preview_voice(text: str, language_code: str, tld: str = "com",
     return None
 
 def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: float, output_path: str, 
-                       tld: str = "com", tts_provider: str = "edge", voice: Optional[str] = None) -> bool:
-    """Create synchronized dubbed audio track"""
+                       tld: str = "com", tts_provider: str = "edge", voice: Optional[str] = None,
+                       max_speed_factor: float = 1.15, allow_extension: float = 0.2) -> bool:
+    """Create synchronized dubbed audio track with natural pacing
+    
+    Args:
+        max_speed_factor: Maximum speed increase (1.15 = 15% faster max) to prevent rushing
+        allow_extension: Allow segments to extend up to this percentage (0.2 = 20% more time)
+    """
     try:
         # Create silent audio track for the full duration
         silence = AudioSegment.silent(duration=int(total_duration * 1000))
@@ -459,20 +465,40 @@ def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: 
                 
                 # Calculate duration and adjust if needed
                 segment_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+                audio_duration = len(audio_clip)
                 
-                # Speed up or slow down if needed to fit the time slot
-                if len(audio_clip) > segment_duration:
-                    # Speed up to fit
-                    speed_factor = len(audio_clip) / segment_duration
-                    audio_clip = audio_clip.speedup(playback_speed=speed_factor)
-                elif len(audio_clip) < segment_duration * 0.8:
-                    # Slow down if too short (optional, can also pad with silence)
-                    speed_factor = len(audio_clip) / (segment_duration * 0.8)
-                    audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                # Natural pacing: Limit speed-up to prevent rushing
+                # Allow slight extension if needed for natural speech
                 
-                # Trim to exact duration
-                if len(audio_clip) > segment_duration:
-                    audio_clip = audio_clip[:int(segment_duration)]
+                if audio_duration > segment_duration:
+                    # Audio is longer than segment
+                    speed_factor = audio_duration / segment_duration
+                    
+                    if speed_factor <= max_speed_factor:
+                        # Speed up within acceptable range (sounds natural)
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                        # Trim to exact duration after speedup
+                        if len(audio_clip) > segment_duration:
+                            audio_clip = audio_clip[:int(segment_duration)]
+                    else:
+                        # Too much speed-up needed - allow extension instead
+                        # Extend the segment duration slightly (up to allow_extension% more)
+                        extended_duration = segment_duration * (1 + allow_extension)
+                        if audio_duration <= extended_duration:
+                            # Use natural speed, allow extension (don't trim)
+                            pass
+                        else:
+                            # Still too long even with extension - use max speed
+                            audio_clip = audio_clip.speedup(playback_speed=max_speed_factor)
+                            # Trim to extended duration
+                            if len(audio_clip) > extended_duration:
+                                audio_clip = audio_clip[:int(extended_duration)]
+                elif audio_duration < segment_duration * 0.7:
+                    # Audio is much shorter - slightly slow down or pad with silence
+                    # Only slow down if it's really short (less than 70% of duration)
+                    speed_factor = audio_duration / (segment_duration * 0.85)
+                    if speed_factor < 0.9:  # Only slow down if more than 10% difference
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
                 
                 # Place at the correct timestamp
                 start_ms = int(start_time * 1000)
@@ -713,6 +739,8 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     selected_tld = "com"
     selected_tts_provider = "edge"  # Default to Edge TTS for better quality
     selected_edge_voice = None
+    max_speed_factor = 1.15  # Default: 15% max speed increase
+    allow_extension = 0.2  # Default: 20% time extension allowed
     
     if add_dubbing:
         st.markdown("### TTS Provider & Voice Selection")
@@ -809,6 +837,33 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     if preview_audio:
                         st.audio(preview_audio, format="audio/mpeg", autoplay=False)
                         st.success("✅ Voice preview ready! Click play to hear it.")
+        
+        # Pacing options for natural-sounding dubbing
+        st.markdown("### ⚡ Pacing Options")
+        st.info("💡 **Tip:** For languages like French that are more verbose, adjust these settings to prevent rushed speech.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            max_speed = st.slider(
+                "Max Speed Increase (%)",
+                min_value=5,
+                max_value=30,
+                value=15,
+                step=5,
+                help="Maximum speed increase to prevent rushing. Lower values = more natural pacing (recommended: 10-15% for verbose languages)"
+            )
+            max_speed_factor = 1.0 + (max_speed / 100.0)
+        
+        with col2:
+            allow_extension_pct = st.slider(
+                "Allow Time Extension (%)",
+                min_value=0,
+                max_value=30,
+                value=20,
+                step=5,
+                help="Allow segments to extend beyond original timing for natural speech. Higher values = more flexible timing"
+            )
+            allow_extension = allow_extension_pct / 100.0
     
     add_subtitles = st.checkbox(
         "📝 Add Subtitles",
@@ -927,7 +982,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     temp_audio.name,
                     selected_tld,
                     selected_tts_provider,
-                    selected_edge_voice
+                    selected_edge_voice,
+                    max_speed_factor,
+                    allow_extension
                 ):
                     audio_path = temp_audio.name
                     st.success("✅ Audio synthesis complete!")
