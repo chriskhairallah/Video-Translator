@@ -50,30 +50,37 @@ LANGUAGE_CODES = {
 }
 
 # Voice options for different languages (gTTS language variants)
+# Format: "Voice Name": {"lang": "language_code", "tld": "tld_code"}
+# Different TLDs can provide slight voice variations
 VOICE_OPTIONS = {
     "French": {
-        "Default French": "fr",
-        "French (Canada)": "fr-ca"
+        "Default French (Standard)": {"lang": "fr", "tld": "com"},
+        "French (Canada)": {"lang": "fr-ca", "tld": "ca"},
+        "French (France - Standard)": {"lang": "fr", "tld": "fr"},
+        "French (Belgium)": {"lang": "fr", "tld": "be"},
+        "French (Switzerland)": {"lang": "fr", "tld": "ch"},
+        "French (Canada - Alternative)": {"lang": "fr-ca", "tld": "com"},
+        "French (European)": {"lang": "fr", "tld": "co.uk"}
     },
     "Spanish": {
-        "Default Spanish": "es",
-        "Spanish (Mexico)": "es-mx",
-        "Spanish (Spain)": "es-es"
+        "Default Spanish": {"lang": "es", "tld": "com"},
+        "Spanish (Mexico)": {"lang": "es-mx", "tld": "com.mx"},
+        "Spanish (Spain)": {"lang": "es-es", "tld": "es"}
     },
     "Portuguese": {
-        "Default Portuguese": "pt",
-        "Portuguese (Brazil)": "pt-br",
-        "Portuguese (Portugal)": "pt-pt"
+        "Default Portuguese": {"lang": "pt", "tld": "com"},
+        "Portuguese (Brazil)": {"lang": "pt-br", "tld": "com.br"},
+        "Portuguese (Portugal)": {"lang": "pt-pt", "tld": "pt"}
     },
     "English": {
-        "US English": "en-us",
-        "UK English": "en-gb",
-        "Australian English": "en-au",
-        "Canadian English": "en-ca"
+        "US English": {"lang": "en-us", "tld": "com"},
+        "UK English": {"lang": "en-gb", "tld": "co.uk"},
+        "Australian English": {"lang": "en-au", "tld": "com.au"},
+        "Canadian English": {"lang": "en-ca", "tld": "ca"}
     },
     "Chinese": {
-        "Mandarin (Simplified)": "zh-cn",
-        "Mandarin (Traditional)": "zh-tw"
+        "Mandarin (Simplified)": {"lang": "zh-cn", "tld": "com"},
+        "Mandarin (Traditional)": {"lang": "zh-tw", "tld": "com"}
     }
 }
 
@@ -482,13 +489,22 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 "Choose Voice",
                 options=list(voice_options.keys()),
                 index=0,
-                help="Select a voice for the dubbing"
+                help="Select a voice for the dubbing. Different options may have slight variations in accent or tone."
             )
-            selected_voice_code = voice_options[selected_voice_name]
+            voice_config = voice_options[selected_voice_name]
+            # Handle both old format (string) and new format (dict with lang and tld)
+            if isinstance(voice_config, dict):
+                selected_voice_code = voice_config["lang"]
+                selected_tld = voice_config["tld"]
+            else:
+                # Backward compatibility with old string format
+                selected_voice_code = voice_config
+                selected_tld = "com"
         else:
             # Default voice for languages without multiple options
             st.info(f"Using default voice for {target_language}")
             selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
+            selected_tld = "com"
         
         # Voice preview
         if st.session_state.translated_script and len(st.session_state.translated_script) > 0:
