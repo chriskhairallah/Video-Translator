@@ -74,7 +74,7 @@ A comprehensive Python web application built with Streamlit that processes uploa
 ## Supported Languages
 
 The application supports translation and dubbing to:
-- French, Spanish, German, Italian, Portuguese
+- English, French, Spanish, German, Italian, Portuguese
 - Japanese, Korean, Chinese, Russian, Arabic
 - Hindi, Dutch, Polish, Turkish
 
