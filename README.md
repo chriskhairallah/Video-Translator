@@ -6,7 +6,7 @@ A comprehensive Python web application built with Streamlit that processes uploa
 
 - 🎬 **Video Upload**: Support for MP4, MOV, AVI, and MKV formats
 - 🎤 **Speech-to-Text**: Accurate transcription with timestamps using Whisper
-- 🌍 **Translation**: Multi-language translation using Google Translate (free)
+- 🌍 **Translation**: Multi-language translation using OpenAI API (or fallback)
 - ✏️ **Editable Scripts**: Review and edit translated text before dubbing
 - 🔊 **Text-to-Speech**: Generate natural-sounding dubbed audio using gTTS
 - 🎥 **Video Output**: Combine original video with translated audio track
@@ -23,7 +23,7 @@ A comprehensive Python web application built with Streamlit that processes uploa
 
 ### Optional
 
-- **Google Translate** - Free translation service (no API key required)
+- **OpenAI API Key** - For high-quality translations (set as environment variable `OPENAI_API_KEY`)
 
 ## Installation
 
