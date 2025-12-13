@@ -30,9 +30,12 @@ if 'original_video_path' not in st.session_state:
     st.session_state.original_video_path = None
 if 'whisper_model' not in st.session_state:
     st.session_state.whisper_model = None
+if 'detected_language' not in st.session_state:
+    st.session_state.detected_language = None
 
 # Language codes for translation and TTS
 LANGUAGE_CODES = {
+    "English": "en",
     "French": "fr",
     "Spanish": "es",
     "German": "de",
@@ -124,6 +127,17 @@ def transcribe_audio_with_timestamps(audio_path: str, language: str = None) -> L
                 verbose=False
             )
         
+        # Detect and store the language
+        detected_lang_code = result.get('language', 'en')
+        # Map Whisper language codes to our language names
+        whisper_to_lang_name = {
+            'en': 'English', 'fr': 'French', 'es': 'Spanish', 'de': 'German',
+            'it': 'Italian', 'pt': 'Portuguese', 'ja': 'Japanese', 'ko': 'Korean',
+            'zh': 'Chinese', 'ru': 'Russian', 'ar': 'Arabic', 'hi': 'Hindi',
+            'nl': 'Dutch', 'pl': 'Polish', 'tr': 'Turkish'
+        }
+        st.session_state.detected_language = whisper_to_lang_name.get(detected_lang_code, 'English')
+        
         # Extract segments with timestamps
         segments = []
         for segment in result.get('segments', []):
@@ -144,6 +158,15 @@ def translate_text_with_llm(text: str, target_language: str, source_language: st
     This is a modular function that can be replaced with other translation services
     """
     try:
+        # Normalize language names for comparison (case-insensitive)
+        source_lang_normalized = source_language.strip().title() if source_language else "English"
+        target_lang_normalized = target_language.strip().title() if target_language else "English"
+        
+        # If source and target languages are the same, return original text
+        # This allows users to edit English text or add English subtitles
+        if source_lang_normalized == target_lang_normalized:
+            return text.strip()
+        
         # Map language names to Google Translate language codes
         lang_code_map = {
             "French": "fr", "Spanish": "es", "German": "de", "Italian": "it",
@@ -152,8 +175,9 @@ def translate_text_with_llm(text: str, target_language: str, source_language: st
             "Polish": "pl", "Turkish": "tr", "English": "en"
         }
         
-        target_code = lang_code_map.get(target_language, target_language.lower()[:2])
-        source_code = lang_code_map.get(source_language, "en")
+        # Use normalized language names for lookup
+        target_code = lang_code_map.get(target_lang_normalized, target_lang_normalized.lower()[:2])
+        source_code = lang_code_map.get(source_lang_normalized, "en")
         
         # Translate with retry logic for rate limiting
         max_retries = 3
@@ -175,7 +199,7 @@ def translate_text_with_llm(text: str, target_language: str, source_language: st
         # Return original text if translation fails
         return text
 
-def translate_segments(segments: List[Dict], target_language: str) -> List[Dict]:
+def translate_segments(segments: List[Dict], target_language: str, source_language: str = "English") -> List[Dict]:
     """Translate all segments"""
     translated = []
     progress_bar = st.progress(0)
@@ -183,7 +207,7 @@ def translate_segments(segments: List[Dict], target_language: str) -> List[Dict]
     
     for i, segment in enumerate(segments):
         status_text.text(f"Translating segment {i+1}/{len(segments)}...")
-        translated_text = translate_text_with_llm(segment['text'], target_language)
+        translated_text = translate_text_with_llm(segment['text'], target_language, source_language)
         translated.append({
             'start': segment['start'],
             'end': segment['end'],
@@ -419,30 +443,42 @@ if uploaded_file is not None:
 if st.session_state.transcript_data:
     st.header("Phase 2: Translation & Script Editing")
     
+    # Show detected source language
+    source_language = st.session_state.detected_language or "English"
+    if st.session_state.detected_language:
+        st.info(f"🎤 Detected source language: **{source_language}**")
+    
+    # Always include all languages, including English, so users can:
+    # - Edit English text (translate English to English)
+    # - Add English subtitles
+    # - Change words in English videos
+    available_languages = list(LANGUAGE_CODES.keys())
+    
+    # Set default index to English if detected language is English, otherwise use first language
+    default_index = available_languages.index("English") if "English" in available_languages else 0
+    
     target_language = st.selectbox(
         "Select Target Language",
-        options=list(LANGUAGE_CODES.keys()),
-        help="Choose the language for translation and dubbing"
+        options=available_languages,
+        index=default_index if source_language == "English" else 0,
+        help="Choose the language for translation and dubbing. You can select English even if the video is in English to edit text or add subtitles."
     )
     
     if st.button("🌍 Translate Script", type="primary"):
         with st.spinner("Translating script..."):
-            translated = translate_segments(st.session_state.transcript_data, target_language)
+            translated = translate_segments(st.session_state.transcript_data, target_language, source_language)
             st.session_state.translated_script = translated
             st.success("✅ Translation complete!")
     
     if st.session_state.translated_script:
         st.subheader("Edit Translated Script")
-        st.markdown("You can edit the translated text in the table below. Adjust timing or text as needed.")
+        st.markdown("You can edit the translated text and timestamps in the table below. Adjust timing or text as needed.")
         
         # Create editable dataframe
         script_df = pd.DataFrame(st.session_state.translated_script)
-        script_df['start_time'] = script_df['start'].apply(lambda x: f"{x:.2f}s")
-        script_df['end_time'] = script_df['end'].apply(lambda x: f"{x:.2f}s")
-        script_df['duration'] = (script_df['end'] - script_df['start']).apply(lambda x: f"{x:.2f}s")
-        
-        display_df = script_df[['start_time', 'end_time', 'original_text', 'translated_text']].copy()
-        display_df.columns = ['Start', 'End', 'Original Text', 'Translated Text (Editable)']
+        # Keep start and end as numeric values for editing
+        display_df = script_df[['start', 'end', 'original_text', 'translated_text']].copy()
+        display_df.columns = ['Start (seconds)', 'End (seconds)', 'Original Text', 'Translated Text']
         
         # Use st.data_editor for editable table
         edited_df = st.data_editor(
@@ -450,16 +486,25 @@ if st.session_state.transcript_data:
             use_container_width=True,
             num_rows="fixed",
             column_config={
-                "Start": st.column_config.TextColumn("Start", disabled=True),
-                "End": st.column_config.TextColumn("End", disabled=True),
+                "Start (seconds)": st.column_config.NumberColumn("Start (seconds)", min_value=0.0, step=0.1, format="%.2f"),
+                "End (seconds)": st.column_config.NumberColumn("End (seconds)", min_value=0.0, step=0.1, format="%.2f"),
                 "Original Text": st.column_config.TextColumn("Original Text", disabled=True),
-                "Translated Text (Editable)": st.column_config.TextColumn("Translated Text", width="large")
+                "Translated Text": st.column_config.TextColumn("Translated Text", width="large")
             }
         )
         
         # Update session state with edited values
-        if not edited_df['Translated Text (Editable)'].equals(display_df['Translated Text (Editable)']):
-            for i, new_text in enumerate(edited_df['Translated Text (Editable)']):
+        for i in range(len(edited_df)):
+            # Update timestamps if changed
+            new_start = float(edited_df.iloc[i]['Start (seconds)'])
+            new_end = float(edited_df.iloc[i]['End (seconds)'])
+            if new_start != st.session_state.translated_script[i]['start'] or new_end != st.session_state.translated_script[i]['end']:
+                st.session_state.translated_script[i]['start'] = new_start
+                st.session_state.translated_script[i]['end'] = new_end
+            
+            # Update translated text if changed
+            new_text = edited_df.iloc[i]['Translated Text']
+            if new_text != st.session_state.translated_script[i]['translated_text']:
                 st.session_state.translated_script[i]['translated_text'] = new_text
 
 # Phase 3 & 4: Generate Video
