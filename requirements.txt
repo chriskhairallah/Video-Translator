@@ -4,6 +4,7 @@ whisper-timestamped>=1.14.0
 deep-translator>=1.11.4
 gtts>=2.5.0
 pydub>=0.25.1
+pyaudioop
 ffmpeg-python>=0.2.0
 pandas>=2.0.0
 numpy>=1.24.0
