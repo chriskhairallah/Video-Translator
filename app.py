@@ -266,57 +266,77 @@ def get_edge_voices_for_language(language_code: str) -> List[Dict]:
         st.warning(f"Error getting Edge TTS voices: {str(e)}")
         return []
 
-async def synthesize_audio_edge_tts(text: str, voice: str, output_path: str) -> bool:
-    """Generate TTS audio using Edge TTS"""
-    try:
-        communicate = edge_tts.Communicate(text, voice)
-        # Edge TTS outputs webm by default, but we need MP3 for pydub
-        # Save to temporary webm first, then convert to MP3
-        temp_webm = output_path.replace('.mp3', '.webm')
-        await communicate.save(temp_webm)
-        
-        # Convert webm to mp3 using pydub (requires ffmpeg)
-        audio = AudioSegment.from_file(temp_webm, format="webm")
-        audio.export(output_path, format="mp3")
-        
-        # Clean up temp file
-        if os.path.exists(temp_webm):
-            os.remove(temp_webm)
-        
-        return True
-    except Exception as e:
-        st.error(f"Edge TTS error: {str(e)}")
-        # Clean up on error
-        if os.path.exists(output_path.replace('.mp3', '.webm')):
-            os.remove(output_path.replace('.mp3', '.webm'))
-        return False
+async def synthesize_audio_edge_tts(text: str, voice: str, output_path: str, max_retries: int = 2) -> bool:
+    """Generate TTS audio using Edge TTS with retry logic"""
+    for attempt in range(max_retries + 1):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            # Edge TTS outputs webm by default, but we need MP3 for pydub
+            # Save to temporary webm first, then convert to MP3
+            temp_webm = output_path.replace('.mp3', '.webm')
+            await communicate.save(temp_webm)
+            
+            # Convert webm to mp3 using pydub (requires ffmpeg)
+            audio = AudioSegment.from_file(temp_webm, format="webm")
+            audio.export(output_path, format="mp3")
+            
+            # Clean up temp file
+            if os.path.exists(temp_webm):
+                os.remove(temp_webm)
+            
+            return True
+        except Exception as e:
+            error_str = str(e)
+            # Check if it's a 403 or connection error
+            if "403" in error_str or "Invalid response status" in error_str:
+                if attempt < max_retries:
+                    # Wait before retrying (exponential backoff)
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                else:
+                    # Final attempt failed, return False
+                    if os.path.exists(output_path.replace('.mp3', '.webm')):
+                        os.remove(output_path.replace('.mp3', '.webm'))
+                    return False
+            else:
+                # Other errors, don't retry
+                if os.path.exists(output_path.replace('.mp3', '.webm')):
+                    os.remove(output_path.replace('.mp3', '.webm'))
+                return False
+    
+    return False
 
 def synthesize_audio(text: str, language_code: str, output_path: str, tld: str = "com", 
                      tts_provider: str = "edge", voice: Optional[str] = None) -> bool:
-    """Generate TTS audio using specified provider"""
+    """Generate TTS audio using specified provider with automatic fallback"""
     if tts_provider == "edge":
         if voice is None:
             # Get default voice for language
             voices = get_edge_voices_for_language(language_code)
             if not voices:
-                st.warning(f"No Edge TTS voices found for {language_code}, falling back to gTTS")
+                # Silently fall back to gTTS if no voices found
                 tts_provider = "gtts"
             else:
                 voice = voices[0]["ShortName"]
         
         if voice:
             try:
-                # Run async function
+                # Run async function with retry logic
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 result = loop.run_until_complete(synthesize_audio_edge_tts(text, voice, output_path))
                 loop.close()
-                return result
+                
+                # If Edge TTS failed (403 or other errors), fall back to gTTS
+                if not result:
+                    tts_provider = "gtts"
+                else:
+                    return True
             except Exception as e:
-                st.warning(f"Edge TTS failed: {str(e)}, falling back to gTTS")
+                # Any exception means fall back to gTTS
                 tts_provider = "gtts"
     
-    # Fallback to gTTS
+    # Fallback to gTTS (either by choice or after Edge TTS failure)
     if tts_provider == "gtts":
         try:
             tts = gTTS(text=text, lang=language_code, slow=False, tld=tld)
@@ -328,35 +348,42 @@ def synthesize_audio(text: str, language_code: str, output_path: str, tld: str =
     
     return False
 
-async def preview_voice_edge_tts(text: str, voice: str) -> bytes:
-    """Generate a preview audio sample using Edge TTS"""
-    try:
-        communicate = edge_tts.Communicate(text, voice)
-        audio_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_data += chunk["data"]
-        # Edge TTS outputs webm/opus, convert to MP3 for compatibility
-        if audio_data:
-            # Save to temp file, convert, then return
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_webm:
-                temp_webm.write(audio_data)
-                temp_webm_path = temp_webm.name
-            
-            # Convert to MP3
-            audio = AudioSegment.from_file(temp_webm_path, format="webm")
-            mp3_buffer = BytesIO()
-            audio.export(mp3_buffer, format="mp3")
-            mp3_buffer.seek(0)
-            result = mp3_buffer.getvalue()
-            
-            # Cleanup
-            os.remove(temp_webm_path)
-            return result
-        return None
-    except Exception as e:
-        st.error(f"Edge TTS preview error: {str(e)}")
-        return None
+async def preview_voice_edge_tts(text: str, voice: str, max_retries: int = 1) -> bytes:
+    """Generate a preview audio sample using Edge TTS with retry logic"""
+    for attempt in range(max_retries + 1):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            audio_data = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_data += chunk["data"]
+            # Edge TTS outputs webm/opus, convert to MP3 for compatibility
+            if audio_data:
+                # Save to temp file, convert, then return
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_webm:
+                    temp_webm.write(audio_data)
+                    temp_webm_path = temp_webm.name
+                
+                # Convert to MP3
+                audio = AudioSegment.from_file(temp_webm_path, format="webm")
+                mp3_buffer = BytesIO()
+                audio.export(mp3_buffer, format="mp3")
+                mp3_buffer.seek(0)
+                result = mp3_buffer.getvalue()
+                
+                # Cleanup
+                os.remove(temp_webm_path)
+                return result
+            return None
+        except Exception as e:
+            error_str = str(e)
+            # Check if it's a 403 or connection error
+            if ("403" in error_str or "Invalid response status" in error_str) and attempt < max_retries:
+                await asyncio.sleep(1)
+                continue
+            # Return None on error (will trigger fallback to gTTS)
+            return None
+    return None
 
 def preview_voice(text: str, language_code: str, tld: str = "com", 
                  tts_provider: str = "edge", voice: Optional[str] = None) -> bytes:
@@ -417,8 +444,15 @@ def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: 
                 # Generate TTS for this segment
                 # Both Edge TTS and gTTS can output MP3
                 temp_audio_path = os.path.join(temp_dir, f"segment_{i}.mp3")
+                
+                # Try with selected provider, automatically fall back to gTTS if it fails
                 if not synthesize_audio(text, language_code, temp_audio_path, tld, tts_provider, voice):
-                    continue
+                    # If Edge TTS failed, silently try gTTS as fallback
+                    if tts_provider == "edge":
+                        if not synthesize_audio(text, language_code, temp_audio_path, tld, "gtts", None):
+                            continue  # Skip this segment if both fail
+                    else:
+                        continue  # Skip if gTTS was already tried and failed
                 
                 # Load the generated audio (both providers output MP3)
                 audio_clip = AudioSegment.from_mp3(temp_audio_path)
@@ -684,16 +718,21 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         st.markdown("### TTS Provider & Voice Selection")
         
         # TTS Provider selection
+        # Note: Edge TTS may have 403 errors due to Microsoft API restrictions
+        # Default to gTTS if Edge TTS is unreliable
         tts_provider = st.selectbox(
             "TTS Provider",
-            options=["edge", "gtts"],
+            options=["gtts", "edge"],
             index=0,
-            format_func=lambda x: "Edge TTS (Microsoft) - Recommended" if x == "edge" else "Google TTS (gTTS) - Basic",
-            help="Edge TTS provides much more natural-sounding voices and is completely free. gTTS is a fallback option."
+            format_func=lambda x: "Google TTS (gTTS) - Reliable" if x == "gtts" else "Edge TTS (Microsoft) - May have access issues",
+            help="gTTS is more reliable. Edge TTS may have 403 errors due to Microsoft API restrictions, but will automatically fall back to gTTS if it fails."
         )
         selected_tts_provider = tts_provider
         
         if tts_provider == "edge":
+            # Show warning about potential 403 errors
+            st.info("⚠️ **Note:** Edge TTS may encounter 403 errors due to Microsoft API restrictions. The app will automatically fall back to gTTS if Edge TTS fails.")
+            
             # Edge TTS voice selection
             lang_code = LANGUAGE_CODES.get(target_language, "en")
             edge_voices = get_edge_voices_for_language(lang_code)
