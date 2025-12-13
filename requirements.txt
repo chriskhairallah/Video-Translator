@@ -1,4 +1,7 @@
 streamlit>=1.28.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchaudio>=2.0.0
 openai-whisper>=20231117
 whisper-timestamped>=1.14.0
 deep-translator>=1.11.4
@@ -8,5 +11,3 @@ audioop-lts
 ffmpeg-python>=0.2.0
 pandas>=2.0.0
 numpy>=1.24.0
-torch>=2.0.0
-torchaudio>=2.0.0
