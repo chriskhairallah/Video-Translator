@@ -7,9 +7,11 @@ from pathlib import Path
 import whisper
 from whisper_timestamped import load_model, transcribe_timestamped
 from gtts import gTTS
+import edge_tts
+import asyncio
 from pydub import AudioSegment
 import pandas as pd
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from deep_translator import GoogleTranslator
 from io import BytesIO
 import time
@@ -32,6 +34,8 @@ if 'whisper_model' not in st.session_state:
     st.session_state.whisper_model = None
 if 'detected_language' not in st.session_state:
     st.session_state.detected_language = None
+if 'edge_tts_voices' not in st.session_state:
+    st.session_state.edge_tts_voices = None
 
 # Language codes for translation and TTS
 LANGUAGE_CODES = {
@@ -221,29 +225,178 @@ def translate_segments(segments: List[Dict], target_language: str, source_langua
     
     return translated
 
-def synthesize_audio(text: str, language_code: str, output_path: str, tld: str = "com") -> bool:
-    """Generate TTS audio using gTTS"""
+async def get_edge_tts_voices():
+    """Get all available Edge TTS voices (cached)"""
+    if st.session_state.edge_tts_voices is None:
+        try:
+            voices = await edge_tts.list_voices()
+            st.session_state.edge_tts_voices = voices
+        except Exception as e:
+            st.warning(f"Failed to load Edge TTS voices: {str(e)}")
+            return []
+    return st.session_state.edge_tts_voices
+
+def get_edge_voices_for_language(language_code: str) -> List[Dict]:
+    """Get Edge TTS voices for a specific language"""
     try:
-        tts = gTTS(text=text, lang=language_code, slow=False, tld=tld)
-        tts.save(output_path)
+        voices = asyncio.run(get_edge_tts_voices())
+        if not voices:
+            return []
+        
+        # Map language codes to Edge TTS language format
+        lang_map = {
+            "en": "en-", "fr": "fr-", "es": "es-", "de": "de-", "it": "it-",
+            "pt": "pt-", "ja": "ja-", "ko": "ko-", "zh": "zh-", "ru": "ru-",
+            "ar": "ar-", "hi": "hi-", "nl": "nl-", "pl": "pl-", "tr": "tr-"
+        }
+        
+        lang_prefix = lang_map.get(language_code.lower(), language_code.lower() + "-")
+        
+        # Filter voices by language
+        matching_voices = [
+            v for v in voices 
+            if v["Locale"].lower().startswith(lang_prefix.lower())
+        ]
+        
+        # Sort by gender and name for consistency
+        matching_voices.sort(key=lambda x: (x.get("Gender", ""), x.get("ShortName", "")))
+        
+        return matching_voices
+    except Exception as e:
+        st.warning(f"Error getting Edge TTS voices: {str(e)}")
+        return []
+
+async def synthesize_audio_edge_tts(text: str, voice: str, output_path: str) -> bool:
+    """Generate TTS audio using Edge TTS"""
+    try:
+        communicate = edge_tts.Communicate(text, voice)
+        # Edge TTS outputs webm by default, but we need MP3 for pydub
+        # Save to temporary webm first, then convert to MP3
+        temp_webm = output_path.replace('.mp3', '.webm')
+        await communicate.save(temp_webm)
+        
+        # Convert webm to mp3 using pydub (requires ffmpeg)
+        audio = AudioSegment.from_file(temp_webm, format="webm")
+        audio.export(output_path, format="mp3")
+        
+        # Clean up temp file
+        if os.path.exists(temp_webm):
+            os.remove(temp_webm)
+        
         return True
     except Exception as e:
-        st.error(f"TTS error: {str(e)}")
+        st.error(f"Edge TTS error: {str(e)}")
+        # Clean up on error
+        if os.path.exists(output_path.replace('.mp3', '.webm')):
+            os.remove(output_path.replace('.mp3', '.webm'))
         return False
 
-def preview_voice(text: str, language_code: str, tld: str = "com") -> bytes:
-    """Generate a preview audio sample for voice selection"""
+def synthesize_audio(text: str, language_code: str, output_path: str, tld: str = "com", 
+                     tts_provider: str = "edge", voice: Optional[str] = None) -> bool:
+    """Generate TTS audio using specified provider"""
+    if tts_provider == "edge":
+        if voice is None:
+            # Get default voice for language
+            voices = get_edge_voices_for_language(language_code)
+            if not voices:
+                st.warning(f"No Edge TTS voices found for {language_code}, falling back to gTTS")
+                tts_provider = "gtts"
+            else:
+                voice = voices[0]["ShortName"]
+        
+        if voice:
+            try:
+                # Run async function
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(synthesize_audio_edge_tts(text, voice, output_path))
+                loop.close()
+                return result
+            except Exception as e:
+                st.warning(f"Edge TTS failed: {str(e)}, falling back to gTTS")
+                tts_provider = "gtts"
+    
+    # Fallback to gTTS
+    if tts_provider == "gtts":
+        try:
+            tts = gTTS(text=text, lang=language_code, slow=False, tld=tld)
+            tts.save(output_path)
+            return True
+        except Exception as e:
+            st.error(f"gTTS error: {str(e)}")
+            return False
+    
+    return False
+
+async def preview_voice_edge_tts(text: str, voice: str) -> bytes:
+    """Generate a preview audio sample using Edge TTS"""
     try:
-        tts = gTTS(text=text, lang=language_code, slow=False, tld=tld)
-        audio_buffer = BytesIO()
-        tts.write_to_fp(audio_buffer)
-        audio_buffer.seek(0)
-        return audio_buffer.getvalue()
+        communicate = edge_tts.Communicate(text, voice)
+        audio_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data += chunk["data"]
+        # Edge TTS outputs webm/opus, convert to MP3 for compatibility
+        if audio_data:
+            # Save to temp file, convert, then return
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as temp_webm:
+                temp_webm.write(audio_data)
+                temp_webm_path = temp_webm.name
+            
+            # Convert to MP3
+            audio = AudioSegment.from_file(temp_webm_path, format="webm")
+            mp3_buffer = BytesIO()
+            audio.export(mp3_buffer, format="mp3")
+            mp3_buffer.seek(0)
+            result = mp3_buffer.getvalue()
+            
+            # Cleanup
+            os.remove(temp_webm_path)
+            return result
+        return None
     except Exception as e:
-        st.error(f"Preview generation error: {str(e)}")
+        st.error(f"Edge TTS preview error: {str(e)}")
         return None
 
-def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: float, output_path: str, tld: str = "com") -> bool:
+def preview_voice(text: str, language_code: str, tld: str = "com", 
+                 tts_provider: str = "edge", voice: Optional[str] = None) -> bytes:
+    """Generate a preview audio sample for voice selection"""
+    if tts_provider == "edge":
+        if voice is None:
+            voices = get_edge_voices_for_language(language_code)
+            if not voices:
+                tts_provider = "gtts"
+            else:
+                voice = voices[0]["ShortName"]
+        
+        if voice:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                result = loop.run_until_complete(preview_voice_edge_tts(text, voice))
+                loop.close()
+                if result:
+                    return result
+            except Exception as e:
+                st.warning(f"Edge TTS preview failed: {str(e)}, using gTTS")
+                tts_provider = "gtts"
+    
+    # Fallback to gTTS
+    if tts_provider == "gtts":
+        try:
+            tts = gTTS(text=text, lang=language_code, slow=False, tld=tld)
+            audio_buffer = BytesIO()
+            tts.write_to_fp(audio_buffer)
+            audio_buffer.seek(0)
+            return audio_buffer.getvalue()
+        except Exception as e:
+            st.error(f"gTTS preview error: {str(e)}")
+            return None
+    
+    return None
+
+def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: float, output_path: str, 
+                       tld: str = "com", tts_provider: str = "edge", voice: Optional[str] = None) -> bool:
     """Create synchronized dubbed audio track"""
     try:
         # Create silent audio track for the full duration
@@ -262,11 +415,12 @@ def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: 
                     continue
                 
                 # Generate TTS for this segment
+                # Both Edge TTS and gTTS can output MP3
                 temp_audio_path = os.path.join(temp_dir, f"segment_{i}.mp3")
-                if not synthesize_audio(text, language_code, temp_audio_path, tld):
+                if not synthesize_audio(text, language_code, temp_audio_path, tld, tts_provider, voice):
                     continue
                 
-                # Load the generated audio
+                # Load the generated audio (both providers output MP3)
                 audio_clip = AudioSegment.from_mp3(temp_audio_path)
                 
                 # Calculate duration and adjust if needed
@@ -523,33 +677,70 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     # Voice selection for dubbing (initialize defaults)
     selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
     selected_tld = "com"
+    selected_tts_provider = "edge"  # Default to Edge TTS for better quality
+    selected_edge_voice = None
     
     if add_dubbing:
-        st.markdown("### Voice Selection")
+        st.markdown("### TTS Provider & Voice Selection")
         
-        # Check if voice options are available for this language
-        if target_language in VOICE_OPTIONS:
-            voice_options = VOICE_OPTIONS[target_language]
-            selected_voice_name = st.selectbox(
-                "Choose Voice",
-                options=list(voice_options.keys()),
-                index=0,
-                help="Select a voice for the dubbing. Different options may have slight variations in accent or tone."
-            )
-            voice_config = voice_options[selected_voice_name]
-            # Handle both old format (string) and new format (dict with lang and tld)
-            if isinstance(voice_config, dict):
-                selected_voice_code = voice_config["lang"]
-                selected_tld = voice_config["tld"]
+        # TTS Provider selection
+        tts_provider = st.selectbox(
+            "TTS Provider",
+            options=["edge", "gtts"],
+            index=0,
+            format_func=lambda x: "Edge TTS (Microsoft) - Recommended" if x == "edge" else "Google TTS (gTTS) - Basic",
+            help="Edge TTS provides much more natural-sounding voices and is completely free. gTTS is a fallback option."
+        )
+        selected_tts_provider = tts_provider
+        
+        if tts_provider == "edge":
+            # Edge TTS voice selection
+            lang_code = LANGUAGE_CODES.get(target_language, "en")
+            edge_voices = get_edge_voices_for_language(lang_code)
+            
+            if edge_voices:
+                # Create voice display names
+                voice_options = []
+                voice_map = {}
+                for voice in edge_voices:
+                    gender = voice.get("Gender", "Unknown")
+                    locale = voice.get("Locale", "Unknown")
+                    name = voice.get("ShortName", "")
+                    friendly_name = f"{voice.get('FriendlyName', name)} ({gender}, {locale})"
+                    voice_options.append(friendly_name)
+                    voice_map[friendly_name] = voice["ShortName"]
+                
+                selected_voice_display = st.selectbox(
+                    "Choose Voice",
+                    options=voice_options,
+                    index=0,
+                    help="Select a voice for dubbing. Edge TTS offers high-quality, natural-sounding voices."
+                )
+                selected_edge_voice = voice_map[selected_voice_display]
             else:
-                # Backward compatibility with old string format
-                selected_voice_code = voice_config
-                selected_tld = "com"
+                st.warning(f"No Edge TTS voices found for {target_language}. Falling back to gTTS.")
+                selected_tts_provider = "gtts"
         else:
-            # Default voice for languages without multiple options
-            st.info(f"Using default voice for {target_language}")
-            selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
-            selected_tld = "com"
+            # gTTS voice selection (original logic)
+            if target_language in VOICE_OPTIONS:
+                voice_options = VOICE_OPTIONS[target_language]
+                selected_voice_name = st.selectbox(
+                    "Choose Voice",
+                    options=list(voice_options.keys()),
+                    index=0,
+                    help="Select a voice for the dubbing. Different options may have slight variations in accent or tone."
+                )
+                voice_config = voice_options[selected_voice_name]
+                if isinstance(voice_config, dict):
+                    selected_voice_code = voice_config["lang"]
+                    selected_tld = voice_config["tld"]
+                else:
+                    selected_voice_code = voice_config
+                    selected_tld = "com"
+            else:
+                st.info(f"Using default voice for {target_language}")
+                selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
+                selected_tld = "com"
         
         # Voice preview
         if st.session_state.translated_script and len(st.session_state.translated_script) > 0:
@@ -570,7 +761,12 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             st.markdown("<br>", unsafe_allow_html=True)  # Spacing
             if st.button("🔊 Preview Voice", use_container_width=True):
                 with st.spinner("Generating preview..."):
-                    preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld)
+                    if selected_tts_provider == "edge" and selected_edge_voice:
+                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
+                                                     selected_tts_provider, selected_edge_voice)
+                    else:
+                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
+                                                     selected_tts_provider)
                     if preview_audio:
                         st.audio(preview_audio, format="audio/mpeg", autoplay=False)
                         st.success("✅ Voice preview ready! Click play to hear it.")
@@ -690,7 +886,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     selected_voice_code,
                     total_duration,
                     temp_audio.name,
-                    selected_tld
+                    selected_tld,
+                    selected_tts_provider,
+                    selected_edge_voice
                 ):
                     audio_path = temp_audio.name
                     st.success("✅ Audio synthesis complete!")
