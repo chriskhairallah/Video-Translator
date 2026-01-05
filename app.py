@@ -549,7 +549,7 @@ def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
         st.error(f"SRT generation error: {str(e)}")
         return False
 
-def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial") -> bool:
+def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None) -> bool:
     """Combine video with optional new audio track and/or subtitles using FFmpeg"""
     try:
         # Build filter complex for subtitles if needed
@@ -557,12 +557,19 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
         if subtitle_path and os.path.exists(subtitle_path):
             # Escape the subtitle path for FFmpeg (handle spaces and special characters)
             # Use absolute path and escape single quotes
-            abs_subtitle_path = os.path.abspath(subtitle_path).replace("'", "'\\''")
+            abs_subtitle_path = os.path.abspath(subtitle_path).replace("'", "'\\''").replace(":", "\\:")
             
             # Burn subtitles into video using FFmpeg subtitles filter
             # Style: White text, black outline, bottom center, customizable font size and family
             # MarginV controls distance from bottom (30px default)
-            subtitle_filter = f"subtitles='{abs_subtitle_path}':force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=30'"
+            subtitle_filter = f"subtitles='{abs_subtitle_path}'"
+            
+            # Add fontsdir if provided
+            if fonts_dir:
+                abs_fonts_dir = os.path.abspath(fonts_dir).replace("'", "'\\''").replace(":", "\\:")
+                subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
+                
+            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=30'"
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
@@ -729,7 +736,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     
     # Separate options for dubbing and subtitles
     add_dubbing = st.checkbox(
-        "🔊 Add Dubbed Audio",
+        "🔊 Add Dubbed Audio (BETA)",
         value=False,
         help="Replace the original audio with translated TTS audio"
     )
@@ -897,6 +904,19 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 help="Font family for the subtitles"
             )
         
+        # Font uploader
+        custom_font_file = st.file_uploader(
+            "Upload Custom Font (.ttf, .otf)",
+            type=['ttf', 'otf'],
+            help="Choose a custom font file to use for subtitles. This will override the selected font family."
+        )
+        
+        if custom_font_file:
+            # Use the filename (without extension) as the font family name
+            # Note: For best results, the internal font name should match the filename
+            subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
+            st.info(f"Using custom font: **{subtitle_font_family}**")
+        
         # Preview of subtitle style
         st.markdown("#### Preview:")
         preview_text = "Sample Subtitle Text" if not st.session_state.translated_script else st.session_state.translated_script[0]['translated_text'][:50] + "..."
@@ -1008,13 +1028,21 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         st.warning("⚠️ Failed to generate subtitles, continuing without them.")
             
                 # Step 3: Combine video with audio and/or subtitles
+                fonts_dir = None
+                if add_subtitles and custom_font_file:
+                    fonts_dir = tempfile.mkdtemp()
+                    font_path = os.path.join(fonts_dir, custom_font_file.name)
+                    with open(font_path, "wb") as f:
+                        f.write(custom_font_file.getbuffer())
+                
                 if combine_video_audio(
                     st.session_state.original_video_path,
                     audio_path,  # Will be None if no dubbing, which means keep original audio
                     temp_output.name,
                     subtitle_path,
                     subtitle_font_size,
-                    subtitle_font_family
+                    subtitle_font_family,
+                    fonts_dir
                 ):
                     st.success("✅ Video generation complete!")
                     
@@ -1056,6 +1084,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     os.unlink(temp_audio.name)
                 if temp_srt and os.path.exists(temp_srt.name):
                     os.unlink(temp_srt.name)
+                if fonts_dir and os.path.exists(fonts_dir):
+                    import shutil
+                    shutil.rmtree(fonts_dir)
 
 # Sidebar with instructions
 with st.sidebar:
