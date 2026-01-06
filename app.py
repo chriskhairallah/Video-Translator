@@ -37,7 +37,8 @@ def inject_brand_fonts():
     # We use the stems (filenames without ext) to match what scan_local_fonts() returns
     brand_fonts = [
         "Fontfabric - Mont Heavy 1",
-        "Fontfabric - Mont Regular 1"
+        "Fontfabric - Mont Regular 1",
+        "Gotham Condensed-Medium"
     ]
     
     fonts_found = False
