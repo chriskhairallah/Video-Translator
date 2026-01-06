@@ -69,15 +69,16 @@ def inject_brand_fonts():
     if fonts_found:
         # Apply font to the app UI using the Regular font as default
         css_content += """
-        html, body, [class*="st-"] {
-            font-family: 'Fontfabric - Mont Regular 1', sans-serif;
+        html, body, [class*="st-"], .stMarkdown p {
+            font-family: 'Fontfabric - Mont Regular 1', sans-serif !important;
         }
-        h1, h2, h3, h4, h5, h6 {
+        h1, h2, h3, h4, h5, h6, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
             font-family: 'Fontfabric - Mont Heavy 1', sans-serif !important;
         }
         """
         css_content += "</style>"
         st.markdown(css_content, unsafe_allow_html=True)
+        # st.success(f"DEBUG: Injected {len(brand_fonts)} brand fonts.") # Uncomment if needed for deeper debug
 
 inject_brand_fonts()
 
@@ -1175,6 +1176,14 @@ if st.session_state.translated_script and st.session_state.original_video_path:
 # Sidebar with instructions
 with st.sidebar:
     st.header("📋 Instructions")
+    
+    # Font Test Section
+    with st.expander("🎨 Branding Fonts Test"):
+        st.markdown('<p style="font-family: \'Fontfabric - Mont Heavy 1\';">Mont Heavy: ABC 123</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-family: \'Fontfabric - Mont Regular 1\';">Mont Regular: abc 456</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-family: \'Gotham Condensed-Medium\';">Gotham: XYZ 789</p>', unsafe_allow_html=True)
+        st.write("If the lines above look different, fonts are working correctly.")
+    
     st.markdown("""
     1. **Upload Video**: Upload your video file (MP4, MOV, etc.)
     2. **Transcribe**: Click "Transcribe Video" to extract and transcribe audio
