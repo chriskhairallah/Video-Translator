@@ -34,21 +34,31 @@ def inject_brand_fonts():
     fonts_dir = Path("fonts")
     css_content = "<style>"
     
-    brand_fonts = {
-        "Mont Heavy": "Fontfabric - Mont Heavy 1.otf",
-        "Mont Regular": "Fontfabric - Mont Regular 1.otf"
-    }
+    # We use the stems (filenames without ext) to match what scan_local_fonts() returns
+    brand_fonts = [
+        "Fontfabric - Mont Heavy 1",
+        "Fontfabric - Mont Regular 1"
+    ]
     
     fonts_found = False
-    for font_name, filename in brand_fonts.items():
-        font_path = fonts_dir / filename
-        if font_path.exists():
+    for font_stem in brand_fonts:
+        # Try both .otf and .ttf
+        font_path = None
+        for ext in [".otf", ".ttf"]:
+            p = fonts_dir / (font_stem + ext)
+            if p.exists():
+                font_path = p
+                break
+                
+        if font_path:
             base64_font = get_base64_font(font_path)
-            # Use 'opentype' for .otf files
+            mime_type = "font/opentype" if font_path.suffix == ".otf" else "font/ttf"
+            format_type = "opentype" if font_path.suffix == ".otf" else "truetype"
+            
             css_content += f"""
             @font-face {{
-                font-family: '{font_name}';
-                src: url(data:font/opentype;base64,{base64_font}) format('opentype');
+                font-family: '{font_stem}';
+                src: url(data:{mime_type};base64,{base64_font}) format('{format_type}');
                 font-weight: normal;
                 font-style: normal;
             }}
@@ -56,13 +66,13 @@ def inject_brand_fonts():
             fonts_found = True
     
     if fonts_found:
-        # Apply font to the app UI
+        # Apply font to the app UI using the Regular font as default
         css_content += """
         html, body, [class*="st-"] {
-            font-family: 'Mont Regular', sans-serif;
+            font-family: 'Fontfabric - Mont Regular 1', sans-serif;
         }
         h1, h2, h3, h4, h5, h6 {
-            font-family: 'Mont Heavy', sans-serif !important;
+            font-family: 'Fontfabric - Mont Heavy 1', sans-serif !important;
         }
         """
         css_content += "</style>"
