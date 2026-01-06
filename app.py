@@ -899,9 +899,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         with col2:
             subtitle_font_family = st.selectbox(
                 "Font Family",
-                options=["Arial", "Helvetica", "Times New Roman", "Courier New", "Verdana", "Georgia", "Comic Sans MS"],
+                options=["Arial", "Mont Heavy", "Mont Regular", "Helvetica", "Times New Roman", "Courier New", "Verdana", "Georgia", "Comic Sans MS"],
                 index=0,
-                help="Font family for the subtitles"
+                help="Font family for the subtitles. 'Mont Heavy' and 'Mont Regular' are custom pre-loaded fonts."
             )
         
         # Font uploader
@@ -1042,7 +1042,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     subtitle_path,
                     subtitle_font_size,
                     subtitle_font_family,
-                    fonts_dir
+                    fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None)
                 ):
                     st.success("✅ Video generation complete!")
                     
