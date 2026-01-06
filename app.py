@@ -675,13 +675,18 @@ if st.session_state.transcript_data:
     # - Change words in English videos
     available_languages = list(LANGUAGE_CODES.keys())
     
-    # Set default index to English if detected language is English, otherwise use first language
-    default_index = available_languages.index("English") if "English" in available_languages else 0
+    # Set default index to French if available, otherwise English
+    if "French" in available_languages:
+        default_index = available_languages.index("French")
+    elif "English" in available_languages:
+        default_index = available_languages.index("English")
+    else:
+        default_index = 0
     
     target_language = st.selectbox(
         "Select Target Language",
         options=available_languages,
-        index=default_index if source_language == "English" else 0,
+        index=default_index,
         help="Choose the language for translation and dubbing. You can select English even if the video is in English to edit text or add subtitles."
     )
     
