@@ -3,6 +3,7 @@ import os
 import tempfile
 import subprocess
 import json
+import base64
 from pathlib import Path
 import whisper
 from whisper_timestamped import load_model, transcribe_timestamped
@@ -22,6 +23,62 @@ st.set_page_config(
     page_icon="🎬",
     layout="wide"
 )
+
+def get_base64_font(font_path):
+    with open(font_path, "rb") as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+# Inject Brand Fonts (Mont) via custom CSS
+def inject_brand_fonts():
+    fonts_dir = Path("fonts")
+    css_content = "<style>"
+    
+    brand_fonts = {
+        "Mont Heavy": "Fontfabric - Mont Heavy 1.otf",
+        "Mont Regular": "Fontfabric - Mont Regular 1.otf"
+    }
+    
+    fonts_found = False
+    for font_name, filename in brand_fonts.items():
+        font_path = fonts_dir / filename
+        if font_path.exists():
+            base64_font = get_base64_font(font_path)
+            # Use 'opentype' for .otf files
+            css_content += f"""
+            @font-face {{
+                font-family: '{font_name}';
+                src: url(data:font/opentype;base64,{base64_font}) format('opentype');
+                font-weight: normal;
+                font-style: normal;
+            }}
+            """
+            fonts_found = True
+    
+    if fonts_found:
+        # Apply font to the app UI
+        css_content += """
+        html, body, [class*="st-"] {
+            font-family: 'Mont Regular', sans-serif;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            font-family: 'Mont Heavy', sans-serif !important;
+        }
+        """
+        css_content += "</style>"
+        st.markdown(css_content, unsafe_allow_html=True)
+
+inject_brand_fonts()
+
+
+def scan_local_fonts():
+    fonts_dir = Path("fonts")
+    if not fonts_dir.exists():
+        return []
+    # Find all .ttf and .otf files
+    font_files = list(fonts_dir.glob("*.ttf")) + list(fonts_dir.glob("*.otf"))
+    # Return just the names (without extension)
+    return [f.stem for f in font_files]
 
 # Initialize session state
 if 'transcript_data' not in st.session_state:
@@ -902,11 +959,18 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             )
         
         with col2:
+            local_fonts = scan_local_fonts()
+            font_options = ["Arial", "Helvetica", "Times New Roman", "Courier New", "Verdana", "Georgia", "Comic Sans MS"]
+            # Add local fonts to the options if not already there
+            for f in local_fonts:
+                if f not in font_options:
+                    font_options.insert(1, f) # Put them near the top
+            
             subtitle_font_family = st.selectbox(
                 "Font Family",
-                options=["Arial", "Mont Heavy", "Mont Regular", "Helvetica", "Times New Roman", "Courier New", "Verdana", "Georgia", "Comic Sans MS"],
+                options=font_options,
                 index=0,
-                help="Font family for the subtitles. 'Mont Heavy' and 'Mont Regular' are custom pre-loaded fonts."
+                help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
         
         # Font uploader
@@ -918,9 +982,13 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         
         if custom_font_file:
             # Use the filename (without extension) as the font family name
-            # Note: For best results, the internal font name should match the filename
             subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
-            st.info(f"Using custom font: **{subtitle_font_family}**")
+            st.info(f"Using uploaded custom font: **{subtitle_font_family}**")
+        
+        # Determine fonts_dir for FFmpeg
+        # If we uploaded a file, it will use a temp dir (handled in the generation logic)
+        # If we selected a font that exists in our local fonts/ folder, we use that folder
+        default_fonts_dir = "fonts" if subtitle_font_family in local_fonts else None
         
         # Preview of subtitle style
         st.markdown("#### Preview:")
@@ -1033,7 +1101,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         st.warning("⚠️ Failed to generate subtitles, continuing without them.")
             
                 # Step 3: Combine video with audio and/or subtitles
-                fonts_dir = None
+                fonts_dir = default_fonts_dir if 'default_fonts_dir' in locals() else None
                 if add_subtitles and custom_font_file:
                     fonts_dir = tempfile.mkdtemp()
                     font_path = os.path.join(fonts_dir, custom_font_file.name)
