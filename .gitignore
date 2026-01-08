@@ -10,7 +10,7 @@ ENV/
 .venv
 
 # Streamlit
-.streamlit/
+# .streamlit/
 
 # Temporary files
 *.tmp

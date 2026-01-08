@@ -633,7 +633,9 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
         if subtitle_path and os.path.exists(subtitle_path):
             # Escape the subtitle path for FFmpeg (handle spaces and special characters)
             # Use absolute path and escape single quotes
-            abs_subtitle_path = os.path.abspath(subtitle_path).replace("'", "'\\''").replace(":", "\\:")
+            # CRITICAL FIX: Replace backslashes with forward slashes for Windows FFmpeg compatibility
+            # FFmpeg filter strings require forward slashes even on Windows
+            abs_subtitle_path = os.path.abspath(subtitle_path).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
             
             # Burn subtitles into video using FFmpeg subtitles filter
             # Style: White text, black outline, bottom center, customizable font size and family
@@ -642,7 +644,8 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
             
             # Add fontsdir if provided
             if fonts_dir:
-                abs_fonts_dir = os.path.abspath(fonts_dir).replace("'", "'\\''").replace(":", "\\:")
+                # Use forward slashes for fontsdir as well
+                abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
                 subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
                 
             subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=30'"
