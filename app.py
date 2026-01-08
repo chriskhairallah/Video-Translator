@@ -1172,23 +1172,37 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             
                 # Step 3: Combine video with audio and/or subtitles
                 fonts_dir = default_fonts_dir if 'default_fonts_dir' in locals() else None
+                
+                # Handling Custom Fonts vs System Fonts
                 if add_subtitles and custom_font_file:
+                    # Case 1: User uploaded a custom font
                     fonts_dir = tempfile.mkdtemp()
                     font_path = os.path.join(fonts_dir, custom_font_file.name)
                     with open(font_path, "wb") as f:
                         f.write(custom_font_file.getbuffer())
                     
                     # EXTRACT CORRECT FONT NAME
-                    # This is critical for FFmpeg to find the font in the custom directory
                     extracted_name = get_font_name(font_path)
                     if extracted_name:
                         subtitle_font_family = extracted_name
                         st.info(f"ℹ️ Extracted internal font name: **{subtitle_font_family}**")
                     else:
-                        # Fallback to filename stem if extraction fails
                         subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
                         st.warning(f"⚠️ Could not extract internal font name. Using filename: {subtitle_font_family}")
                 
+                elif add_subtitles and not fonts_dir:
+                    # Case 2: No custom font uploaded, and not using a local project font.
+                    # We are using a standard system font (e.g. Arial, Times New Roman).
+                    # We MUST tell FFmpeg where the system fonts are, or it won't find them.
+                    import platform
+                    system = platform.system()
+                    if system == "Windows":
+                        fonts_dir = "C:/Windows/Fonts"
+                    elif system == "Darwin": # macOS
+                        fonts_dir = "/System/Library/Fonts"
+                    elif system == "Linux":
+                         fonts_dir = "/usr/share/fonts"
+                         
                 if combine_video_audio(
                     st.session_state.original_video_path,
                     audio_path,  # Will be None if no dubbing, which means keep original audio
