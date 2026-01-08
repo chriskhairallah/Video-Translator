@@ -16,6 +16,7 @@ from typing import List, Dict, Tuple, Optional
 from deep_translator import GoogleTranslator
 from io import BytesIO
 import time
+from fontTools.ttLib import TTFont
 
 # Page configuration
 st.set_page_config(
@@ -601,6 +602,50 @@ def format_timestamp(seconds: float) -> str:
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
+def get_font_name(font_path):
+    """
+    Extract the internal font family name from a font file using fonttools.
+    This is what FFmpeg uses to match the font.
+    """
+    try:
+        font = TTFont(font_path)
+        name_table = font['name']
+        
+        # Try to find the Preferred Family Name (ID 16)
+        # If not, fall back to Family Name (ID 1)
+        # We need to decode the bytes to string
+        
+        family_name = None
+        
+        # Helper to decode name record
+        def decode_name(record):
+            try:
+                return record.string.decode(record.getEncoding())
+            except:
+                return None
+
+        # Look for Preferred Family (ID 16)
+        for record in name_table.names:
+            if record.nameID == 16:
+                decoded = decode_name(record)
+                if decoded:
+                    family_name = decoded
+                    break
+                    
+        # If not found, look for Family Name (ID 1)
+        if not family_name:
+            for record in name_table.names:
+                if record.nameID == 1:
+                    decoded = decode_name(record)
+                    if decoded:
+                        family_name = decoded
+                        break
+                        
+        return family_name
+    except Exception as e:
+        print(f"Error extracting font name: {e}")
+        return None
+
 def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
     """Generate SRT subtitle file from translated script"""
     try:
@@ -1004,9 +1049,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         )
         
         if custom_font_file:
-            # Use the filename (without extension) as the font family name
-            subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
-            st.info(f"Using uploaded custom font: **{subtitle_font_family}**")
+            # We'll extract the true internal name later when we save the file to a temp dir
+            # For now, just show the filename as confirmation
+            st.info(f"Using uploaded custom font: **{custom_font_file.name}**")
+            # Set a placeholder that will be updated during generation
+            subtitle_font_family = "Custom Font (extracted during generation)"
         
         # Determine fonts_dir for FFmpeg
         # If we uploaded a file, it will use a temp dir (handled in the generation logic)
@@ -1130,6 +1177,17 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     font_path = os.path.join(fonts_dir, custom_font_file.name)
                     with open(font_path, "wb") as f:
                         f.write(custom_font_file.getbuffer())
+                    
+                    # EXTRACT CORRECT FONT NAME
+                    # This is critical for FFmpeg to find the font in the custom directory
+                    extracted_name = get_font_name(font_path)
+                    if extracted_name:
+                        subtitle_font_family = extracted_name
+                        st.info(f"ℹ️ Extracted internal font name: **{subtitle_font_family}**")
+                    else:
+                        # Fallback to filename stem if extraction fails
+                        subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
+                        st.warning(f"⚠️ Could not extract internal font name. Using filename: {subtitle_font_family}")
                 
                 if combine_video_audio(
                     st.session_state.original_video_path,
