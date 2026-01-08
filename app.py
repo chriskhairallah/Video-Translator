@@ -693,7 +693,7 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
                 abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
                 subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
                 
-            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,MarginV=30'"
+            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,BorderStyle=1,MarginV=30'"
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
