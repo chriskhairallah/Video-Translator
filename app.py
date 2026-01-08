@@ -693,7 +693,7 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
                 abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
                 subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
                 
-            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=30'"
+            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,MarginV=30'"
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
@@ -1098,7 +1098,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     0 0 4px rgba(0, 0, 0, 0.8);
                 margin: 0;
                 line-height: 1.2;
-                font-weight: normal;
+                font-weight: bold;
             ">{preview_text}</p>
         </div>
         <p style="font-size: 0.85em; color: #666; margin-top: -10px; text-align: center;">
