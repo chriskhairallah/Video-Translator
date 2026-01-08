@@ -668,7 +668,8 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
             cmd.extend(['-c:a', 'aac', '-map', '0:v:0', '-map', '1:a:0'])
         else:
             # Keep original audio
-            cmd.extend(['-c:a', 'copy', '-map', '0'])
+            # Use explicit mapping to avoid copying data streams (like timecodes) that might fail
+            cmd.extend(['-c:a', 'copy', '-map', '0:v', '-map', '0:a?'])
         
         cmd.extend(['-shortest', '-y', output_path])
         
