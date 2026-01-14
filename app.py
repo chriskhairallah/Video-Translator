@@ -120,6 +120,8 @@ if 'detected_language' not in st.session_state:
     st.session_state.detected_language = None
 if 'edge_tts_voices' not in st.session_state:
     st.session_state.edge_tts_voices = None
+if 'selected_font_family' not in st.session_state:
+    st.session_state.selected_font_family = None
 
 # Language codes for translation and TTS
 LANGUAGE_CODES = {
@@ -1107,17 +1109,34 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 if f not in font_options:
                     font_options.insert(0, f) # Put local fonts at the top (Gotham-Medium will be first)
             
-            # Set default index to Gotham-Medium if it exists, otherwise 0
-            default_index = 0
-            if "Gotham-Medium" in font_options:
-                default_index = font_options.index("Gotham-Medium")
+            # Determine default font (use session state if set, otherwise default to Gotham-Medium if available, else Arial)
+            if st.session_state.selected_font_family is None:
+                # First time - default to Gotham-Medium if available, otherwise Arial
+                if "Gotham-Medium" in font_options:
+                    st.session_state.selected_font_family = "Gotham-Medium"
+                else:
+                    st.session_state.selected_font_family = "Arial"
             
+            # Make sure the stored font is still in the options (in case fonts changed)
+            if st.session_state.selected_font_family not in font_options:
+                if "Gotham-Medium" in font_options:
+                    st.session_state.selected_font_family = "Gotham-Medium"
+                else:
+                    st.session_state.selected_font_family = font_options[0]
+            
+            # Get the index of the stored font
+            default_index = font_options.index(st.session_state.selected_font_family)
+            
+            # Use the selectbox and store the result in session state
             subtitle_font_family = st.selectbox(
                 "Font Family",
                 options=font_options,
                 index=default_index,
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
+            
+            # Update session state with the selected value
+            st.session_state.selected_font_family = subtitle_font_family
         
         # Font uploader
         custom_font_file = st.file_uploader(
