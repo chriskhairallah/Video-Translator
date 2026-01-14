@@ -691,7 +691,7 @@ def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
         st.error(f"SRT generation error: {str(e)}")
         return False
 
-def generate_ass_subtitles(script: List[Dict], output_path: str, font_family: str = "Arial", font_size: int = 18) -> bool:
+def generate_ass_subtitles(script: List[Dict], output_path: str, font_family: str = "Arial", font_size: int = 28) -> bool:
     """Generate ASS subtitle file with custom styling from translated script"""
     try:
         # ASS header with styling
@@ -1168,10 +1168,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             subtitle_font_family = "Custom Font (extracted during generation)"
         
         # Determine fonts_dir for FFmpeg (now local_fonts is defined)
+        # Store in session state so it's available during video generation
         if subtitle_font_family and subtitle_font_family in local_fonts:
-            default_fonts_dir = "fonts"
+            st.session_state.subtitle_fonts_dir = "fonts"
         else:
-            default_fonts_dir = None
+            st.session_state.subtitle_fonts_dir = None
         
         # Preview of subtitle style
         st.markdown("#### Preview:")
@@ -1273,7 +1274,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             if dubbing_success:
                 # Step 2: Determine font settings and generate subtitles if requested
                 subtitle_path = None
-                fonts_dir = default_fonts_dir if 'default_fonts_dir' in locals() else None
+                # Get fonts_dir and font family from session state (set during subtitle customization)
+                fonts_dir = st.session_state.get('subtitle_fonts_dir', None)
+                # Get the selected font family from session state
+                subtitle_font_family = st.session_state.get('selected_font_family', 'Arial')
                 final_font_family = subtitle_font_family  # Start with selected font
                 
                 # Handling Custom Fonts vs Local Fonts vs System Fonts (determine final font name BEFORE generating subtitles)
