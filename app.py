@@ -1084,7 +1084,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     )
     
     # Subtitle customization options
-    subtitle_font_size = 18
+    subtitle_font_size = 28
     subtitle_font_family = None  # Will be set by selectbox or default
     local_fonts = []  # Initialize outside the if block
     default_fonts_dir = None
@@ -1100,7 +1100,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 "Font Size",
                 min_value=12,
                 max_value=48,
-                value=st.session_state.get('subtitle_font_size', 18),
+                value=st.session_state.get('subtitle_font_size', 28),
                 step=2,
                 key="subtitle_font_size_slider",
                 help="Size of the subtitle text in pixels"
@@ -1173,52 +1173,6 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             st.session_state.subtitle_fonts_dir = "fonts"
         else:
             st.session_state.subtitle_fonts_dir = None
-        
-        # Preview of subtitle style
-        st.markdown("#### Preview:")
-        preview_text = "Sample Subtitle Text" if not st.session_state.translated_script else st.session_state.translated_script[0]['translated_text'][:50] + "..."
-        
-        # FFmpeg font sizes are in pixels relative to video resolution (typically 1080p)
-        # CSS pixels and video pixels render similarly, so use 1:1 mapping for accurate preview
-        # No scaling needed - the font size should match the actual video
-        preview_font_size = subtitle_font_size
-        
-        # Create HTML preview with the selected style
-        # Using a container that simulates video aspect ratio for better accuracy
-        preview_html = f"""
-        <div style="
-            background: linear-gradient(to bottom, #1a1a1a 0%, #2d2d2d 100%);
-            padding: 40px 20px;
-            border-radius: 8px;
-            text-align: center;
-            margin: 20px 0;
-            position: relative;
-            min-height: 200px;
-            display: flex;
-            align-items: flex-end;
-            justify-content: center;
-            padding-bottom: 30px;
-        ">
-            <p style="
-                color: white;
-                font-family: '{subtitle_font_family}', sans-serif;
-                font-size: {preview_font_size}px;
-                text-shadow: 
-                    -1px -1px 0 #000,
-                    1px -1px 0 #000,
-                    -1px 1px 0 #000,
-                    1px 1px 0 #000,
-                    0 0 4px rgba(0, 0, 0, 0.8);
-                margin: 0;
-                line-height: 1.2;
-                font-weight: bold;
-            ">{preview_text}</p>
-        </div>
-        <p style="font-size: 0.85em; color: #666; margin-top: -10px; text-align: center;">
-            Preview scaled to approximate video appearance (actual size may vary by video resolution)
-        </p>
-        """
-        st.markdown(preview_html, unsafe_allow_html=True)
     
     # Validation
     if not add_dubbing and not add_subtitles:
