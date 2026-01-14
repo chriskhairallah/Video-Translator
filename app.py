@@ -1083,7 +1083,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     
     # Subtitle customization options
     subtitle_font_size = 18
-    subtitle_font_family = "Arial"
+    subtitle_font_family = "Gotham-Medium"  # Default to Gotham-Medium font
     if add_subtitles:
         st.markdown("### Subtitle Customization")
         
@@ -1105,12 +1105,17 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             # Add local fonts to the options if not already there
             for f in local_fonts:
                 if f not in font_options:
-                    font_options.insert(1, f) # Put them near the top
+                    font_options.insert(0, f) # Put local fonts at the top (Gotham-Medium will be first)
+            
+            # Set default index to Gotham-Medium if it exists, otherwise 0
+            default_index = 0
+            if "Gotham-Medium" in font_options:
+                default_index = font_options.index("Gotham-Medium")
             
             subtitle_font_family = st.selectbox(
                 "Font Family",
                 options=font_options,
-                index=0,
+                index=default_index,
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
         
@@ -1237,7 +1242,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 fonts_dir = default_fonts_dir if 'default_fonts_dir' in locals() else None
                 final_font_family = subtitle_font_family  # Start with selected font
                 
-                # Handling Custom Fonts vs System Fonts (determine final font name BEFORE generating subtitles)
+                # Handling Custom Fonts vs Local Fonts vs System Fonts (determine final font name BEFORE generating subtitles)
                 if add_subtitles and custom_font_file:
                     # Case 1: User uploaded a custom font
                     fonts_dir = tempfile.mkdtemp()
@@ -1254,8 +1259,34 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         final_font_family = os.path.splitext(custom_font_file.name)[0]
                         st.warning(f"⚠️ Could not extract internal font name. Using filename: {final_font_family}")
                 
+                elif add_subtitles and fonts_dir and os.path.exists(fonts_dir):
+                    # Case 2: Using a local font from the fonts/ directory
+                    # Find the font file matching the selected font name
+                    fonts_dir_path = Path(fonts_dir)
+                    font_file = None
+                    # Try both .ttf and .otf extensions
+                    for ext in [".ttf", ".otf"]:
+                        potential_file = fonts_dir_path / (subtitle_font_family + ext)
+                        if potential_file.exists():
+                            font_file = potential_file
+                            break
+                    
+                    if font_file:
+                        # Extract the internal font name from the local font file
+                        extracted_name = get_font_name(str(font_file))
+                        if extracted_name:
+                            final_font_family = extracted_name
+                            st.info(f"ℹ️ Using local font: **{final_font_family}**")
+                        else:
+                            # Fall back to filename if extraction fails
+                            final_font_family = subtitle_font_family
+                            st.warning(f"⚠️ Could not extract internal font name from local font. Using filename: {final_font_family}")
+                    else:
+                        # Font file not found, keep the selected name as-is
+                        st.warning(f"⚠️ Font file not found for '{subtitle_font_family}'. Using name as-is.")
+                
                 elif add_subtitles and not fonts_dir:
-                    # Case 2: No custom font uploaded, and not using a local project font.
+                    # Case 3: No custom font uploaded, and not using a local project font.
                     # We are using a standard system font (e.g. Arial, Times New Roman).
                     # We MUST tell FFmpeg where the system fonts are, or it won't find them.
                     import platform
