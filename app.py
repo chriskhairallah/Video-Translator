@@ -1124,14 +1124,12 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 else:
                     st.session_state.selected_font_family = font_options[0]
             
-            # Get the index of the stored font
-            default_index = font_options.index(st.session_state.selected_font_family)
-            
-            # Use the selectbox and store the result in session state
+            # Use selectbox with key parameter to maintain state across reruns
             subtitle_font_family = st.selectbox(
                 "Font Family",
                 options=font_options,
-                index=default_index,
+                index=font_options.index(st.session_state.selected_font_family),
+                key="font_family_selectbox",
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
             
@@ -1161,11 +1159,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         st.markdown("#### Preview:")
         preview_text = "Sample Subtitle Text" if not st.session_state.translated_script else st.session_state.translated_script[0]['translated_text'][:50] + "..."
         
-        # FFmpeg font sizes are relative to video resolution (typically 1080p)
-        # For accurate preview, we need to account for how videos are displayed
-        # Videos are often displayed larger than their pixel dimensions, making subtitles appear bigger
-        # Increasing the preview size to better match the actual video subtitle appearance
-        preview_font_size = int(subtitle_font_size * 1.2)  # Scale up to better match video display size
+        # FFmpeg font sizes are in pixels relative to video resolution (typically 1080p)
+        # CSS pixels and video pixels render similarly, so use 1:1 mapping for accurate preview
+        # No scaling needed - the font size should match the actual video
+        preview_font_size = subtitle_font_size
         
         # Create HTML preview with the selected style
         # Using a container that simulates video aspect ratio for better accuracy
