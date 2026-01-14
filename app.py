@@ -1169,9 +1169,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         
         # Determine fonts_dir for FFmpeg (now local_fonts is defined)
         # Store in session state so it's available during video generation
+        # Only set fonts_dir if it's actually a local font, otherwise clear it
         if subtitle_font_family and subtitle_font_family in local_fonts:
             st.session_state.subtitle_fonts_dir = "fonts"
         else:
+            # Clear fonts_dir for system fonts
             st.session_state.subtitle_fonts_dir = None
     
     # Validation
@@ -1234,10 +1236,18 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 subtitle_font_family = st.session_state.get('selected_font_family', 'Arial')
                 final_font_family = subtitle_font_family  # Start with selected font
                 
+                # Track if fonts_dir is a temporary directory (should be cleaned up)
+                is_temp_fonts_dir = False
+                
+                # Check if this is actually a local font (scan again to be sure)
+                local_fonts_check = scan_local_fonts()
+                is_local_font = subtitle_font_family in local_fonts_check
+                
                 # Handling Custom Fonts vs Local Fonts vs System Fonts (determine final font name BEFORE generating subtitles)
                 if add_subtitles and custom_font_file:
                     # Case 1: User uploaded a custom font
                     fonts_dir = tempfile.mkdtemp()
+                    is_temp_fonts_dir = True  # Mark as temporary
                     font_path = os.path.join(fonts_dir, custom_font_file.name)
                     with open(font_path, "wb") as f:
                         f.write(custom_font_file.getbuffer())
@@ -1251,7 +1261,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         final_font_family = os.path.splitext(custom_font_file.name)[0]
                         st.warning(f"⚠️ Could not extract internal font name. Using filename: {final_font_family}")
                 
-                elif add_subtitles and fonts_dir and os.path.exists(fonts_dir):
+                elif add_subtitles and fonts_dir and os.path.exists(fonts_dir) and is_local_font:
                     # Case 2: Using a local font from the fonts/ directory
                     # Find the font file matching the selected font name
                     fonts_dir_path = Path(fonts_dir)
@@ -1275,9 +1285,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                             st.warning(f"⚠️ Could not extract internal font name from local font. Using filename: {final_font_family}")
                     else:
                         # Font file not found, keep the selected name as-is
+                        final_font_family = subtitle_font_family
                         st.warning(f"⚠️ Font file not found for '{subtitle_font_family}'. Using name as-is.")
                 
-                elif add_subtitles and not fonts_dir:
+                elif add_subtitles:
                     # Case 3: No custom font uploaded, and not using a local project font.
                     # We are using a standard system font (e.g. Arial, Times New Roman).
                     # We MUST tell FFmpeg where the system fonts are, or it won't find them.
@@ -1350,9 +1361,15 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     os.unlink(temp_audio.name)
                 if subtitle_path and os.path.exists(subtitle_path):
                     os.unlink(subtitle_path)
-                if fonts_dir and os.path.exists(fonts_dir):
+                # Only delete fonts_dir if it's a temporary directory (custom font upload)
+                # Don't delete the actual "fonts" folder or system font directories
+                if fonts_dir and os.path.exists(fonts_dir) and is_temp_fonts_dir:
                     import shutil
-                    shutil.rmtree(fonts_dir)
+                    try:
+                        shutil.rmtree(fonts_dir)
+                    except (PermissionError, OSError) as e:
+                        # If cleanup fails, log but don't crash
+                        st.warning(f"⚠️ Could not clean up temporary font directory: {str(e)}")
 
 # Sidebar with instructions
 with st.sidebar:
