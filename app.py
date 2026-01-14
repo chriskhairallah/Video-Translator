@@ -1085,21 +1085,28 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     
     # Subtitle customization options
     subtitle_font_size = 18
-    subtitle_font_family = "Gotham-Medium"  # Default to Gotham-Medium font
+    subtitle_font_family = None  # Will be set by selectbox or default
+    local_fonts = []  # Initialize outside the if block
+    default_fonts_dir = None
+    
     if add_subtitles:
         st.markdown("### Subtitle Customization")
         
         col1, col2 = st.columns(2)
         
         with col1:
+            # Use key for font size slider to maintain state
             subtitle_font_size = st.slider(
                 "Font Size",
                 min_value=12,
                 max_value=48,
-                value=18,
+                value=st.session_state.get('subtitle_font_size', 18),
                 step=2,
+                key="subtitle_font_size_slider",
                 help="Size of the subtitle text in pixels"
             )
+            # Store in session state
+            st.session_state.subtitle_font_size = subtitle_font_size
         
         with col2:
             local_fonts = scan_local_fonts()
@@ -1109,31 +1116,41 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 if f not in font_options:
                     font_options.insert(0, f) # Put local fonts at the top (Gotham-Medium will be first)
             
-            # Determine default font (use session state if set, otherwise default to Gotham-Medium if available, else Arial)
-            if st.session_state.selected_font_family is None:
+            # Initialize session state font selection if not set
+            if 'selected_font_family' not in st.session_state or st.session_state.selected_font_family is None:
                 # First time - default to Gotham-Medium if available, otherwise Arial
                 if "Gotham-Medium" in font_options:
                     st.session_state.selected_font_family = "Gotham-Medium"
                 else:
                     st.session_state.selected_font_family = "Arial"
             
-            # Make sure the stored font is still in the options (in case fonts changed)
+            # Ensure stored font is in the options list (fallback if font was removed)
             if st.session_state.selected_font_family not in font_options:
                 if "Gotham-Medium" in font_options:
                     st.session_state.selected_font_family = "Gotham-Medium"
-                else:
+                elif font_options:
                     st.session_state.selected_font_family = font_options[0]
+                else:
+                    st.session_state.selected_font_family = "Arial"
             
-            # Use selectbox with key parameter to maintain state across reruns
+            # Safely get the index
+            try:
+                default_index = font_options.index(st.session_state.selected_font_family)
+            except ValueError:
+                # Font not in list, use first available
+                default_index = 0
+                st.session_state.selected_font_family = font_options[0] if font_options else "Arial"
+            
+            # Use selectbox with key parameter - Streamlit will maintain the value automatically
             subtitle_font_family = st.selectbox(
                 "Font Family",
                 options=font_options,
-                index=font_options.index(st.session_state.selected_font_family),
+                index=default_index,
                 key="font_family_selectbox",
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
             
-            # Update session state with the selected value
+            # Always update session state with the current selection
             st.session_state.selected_font_family = subtitle_font_family
         
         # Font uploader
@@ -1150,10 +1167,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             # Set a placeholder that will be updated during generation
             subtitle_font_family = "Custom Font (extracted during generation)"
         
-        # Determine fonts_dir for FFmpeg
-        # If we uploaded a file, it will use a temp dir (handled in the generation logic)
-        # If we selected a font that exists in our local fonts/ folder, we use that folder
-        default_fonts_dir = "fonts" if subtitle_font_family in local_fonts else None
+        # Determine fonts_dir for FFmpeg (now local_fonts is defined)
+        if subtitle_font_family and subtitle_font_family in local_fonts:
+            default_fonts_dir = "fonts"
+        else:
+            default_fonts_dir = None
         
         # Preview of subtitle style
         st.markdown("#### Preview:")
