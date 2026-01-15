@@ -115,7 +115,7 @@ def scan_local_fonts():
     return [f.stem for f in font_files]
 
 # 11labs API Key
-ELEVENLABS_API_KEY = "sk_83268715149468e1c028af0b39575ad6647bda8d2846fab2"
+ELEVENLABS_API_KEY = "sk_0241382673e28ce55cae2878110d6ed62b6bd89eebb0ecc0"
 
 # Initialize 11labs if available
 if ELEVENLABS_AVAILABLE:
@@ -567,7 +567,19 @@ def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str) -> b
                 f.write(chunk)
         return True
     except Exception as e:
-        st.warning(f"ElevenLabs TTS error: {str(e)}")
+        error_msg = str(e)
+        # Try to extract user-friendly error message from ElevenLabs API response
+        if "detected_unusual_activity" in error_msg or "401" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: Your account has been flagged for unusual activity. "
+                    "Free Tier usage has been disabled. Please:\n"
+                    "- Check your ElevenLabs account status\n"
+                    "- Disable any VPN/proxy if you're using one\n"
+                    "- Consider upgrading to a Paid Plan\n"
+                    "- Verify your API key is valid and has sufficient credits")
+        elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            st.error("❌ **ElevenLabs API Error**: Invalid or expired API key. Please check your API key in the code.")
+        else:
+            st.warning(f"ElevenLabs TTS error: {error_msg}")
         return False
 
 def preview_voice_elevenlabs(text: str, voice_id: str) -> bytes:
@@ -586,7 +598,15 @@ def preview_voice_elevenlabs(text: str, voice_id: str) -> bytes:
             audio_data += chunk
         return audio_data
     except Exception as e:
-        st.warning(f"ElevenLabs preview error: {str(e)}")
+        error_msg = str(e)
+        # Try to extract user-friendly error message from ElevenLabs API response
+        if "detected_unusual_activity" in error_msg or "401" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: Your account has been flagged for unusual activity. "
+                    "Free Tier usage has been disabled. Please check your account status or upgrade to a Paid Plan.")
+        elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            st.error("❌ **ElevenLabs API Error**: Invalid or expired API key. Please check your API key.")
+        else:
+            st.warning(f"ElevenLabs preview error: {error_msg}")
         return None
 
 def create_dubbed_audio_elevenlabs(script: List[Dict], total_duration: float, output_path: str, 
