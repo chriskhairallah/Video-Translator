@@ -1429,6 +1429,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
 
         # Preview of subtitle style (moved below after color/outline controls)
         
+        # Preview of subtitle style
+        st.markdown("#### Preview:")
+        preview_text = "Sample Subtitle Text" if not st.session_state.translated_script else st.session_state.translated_script[0]['translated_text'][:50] + "..."
+        
         # FFmpeg font sizes are relative to video resolution (typically 1080p)
         # For accurate preview, we need to account for how videos are displayed
         # Videos are often displayed larger than their pixel dimensions, making subtitles appear bigger
@@ -1465,24 +1469,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             outline_shadow = "none"
         
         # Using a container that simulates video aspect ratio for better accuracy
-        # Add toggle for background preview
-        preview_bg = st.radio(
-            "Preview Background",
-            options=["Dark", "Light", "Mixed"],
-            index=0,
-            horizontal=True,
-            help="Test your subtitle visibility on different backgrounds"
-        )
-        
-        bg_styles = {
-            "Dark": "background: linear-gradient(to bottom, #1a1a1a 0%, #2d2d2d 100%);",
-            "Light": "background: linear-gradient(to bottom, #e0e0e0 0%, #ffffff 100%);",
-            "Mixed": "background: linear-gradient(to right, #1a1a1a 0%, #ffffff 100%);"
-        }
-        
         preview_html = f"""
         <div style="
-            {bg_styles[preview_bg]}
+            background: linear-gradient(to bottom, #1a1a1a 0%, #2d2d2d 100%);
             padding: 40px 20px;
             border-radius: 8px;
             text-align: center;
