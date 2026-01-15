@@ -565,7 +565,7 @@ def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str,
             text=text,
             voice_id=voice_id,
             model_id=model_id,
-            output_format="mp3_44100_192",  # Higher quality: 192kbps instead of 128kbps
+            output_format="mp3_44100_128",  # 128kbps - available for Starter tier
             voice_settings={
                 "stability": stability,
                 "similarity_boost": similarity_boost,
@@ -589,6 +589,9 @@ def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str,
                     "- Verify your API key is valid and has sufficient credits")
         elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
             st.error("❌ **ElevenLabs API Error**: Invalid or expired API key. Please check your API key in the code.")
+        elif "output_format_not_allowed" in error_msg or "403" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: The requested output format is not available for your subscription tier. "
+                    "Please check your ElevenLabs plan or contact support.")
         else:
             st.warning(f"ElevenLabs TTS error: {error_msg}")
         return False
@@ -607,7 +610,7 @@ def preview_voice_elevenlabs(text: str, voice_id: str,
             text=text,
             voice_id=voice_id,
             model_id=model_id,
-            output_format="mp3_44100_192",  # Higher quality
+            output_format="mp3_44100_128",  # 128kbps - available for Starter tier
             voice_settings={
                 "stability": stability,
                 "similarity_boost": similarity_boost,
@@ -633,12 +636,7 @@ def preview_voice_elevenlabs(text: str, voice_id: str,
 
 def create_dubbed_audio_elevenlabs(script: List[Dict], total_duration: float, output_path: str, 
                                   voice_id: str, max_speed_factor: float = 1.15, 
-                                  allow_extension: float = 0.2,
-                                  model_id: str = "eleven_turbo_v2_5",
-                                  stability: float = 0.5,
-                                  similarity_boost: float = 0.75,
-                                  style: float = 0.0,
-                                  use_speaker_boost: bool = True) -> bool:
+                                  allow_extension: float = 0.2) -> bool:
     """Create synchronized dubbed audio track using ElevenLabs with natural pacing
     
     Args:
@@ -667,12 +665,7 @@ def create_dubbed_audio_elevenlabs(script: List[Dict], total_duration: float, ou
                 # Generate TTS for this segment using ElevenLabs
                 temp_audio_path = os.path.join(temp_dir, f"segment_{i}.mp3")
                 
-                if not synthesize_audio_elevenlabs(text, voice_id, temp_audio_path,
-                                                   model_id=model_id,
-                                                   stability=stability,
-                                                   similarity_boost=similarity_boost,
-                                                   style=style,
-                                                   use_speaker_boost=use_speaker_boost):
+                if not synthesize_audio_elevenlabs(text, voice_id, temp_audio_path):
                     continue  # Skip this segment if synthesis fails
                 
                 # Load the generated audio (ElevenLabs outputs MP3)
@@ -1175,12 +1168,6 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     selected_elevenlabs_voice_name = None
     max_speed_factor = 1.15  # Default: 15% max speed increase
     allow_extension = 0.2  # Default: 20% time extension allowed
-    # Voice quality settings
-    elevenlabs_model = "eleven_turbo_v2_5"
-    voice_stability = 0.5
-    voice_similarity_boost = 0.75
-    voice_style = 0.0
-    use_speaker_boost = True
     
     if add_dubbing:
         if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
@@ -1242,65 +1229,13 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         with st.spinner("Generating preview..."):
                             preview_audio = preview_voice_elevenlabs(
                                 preview_text_input, 
-                                selected_elevenlabs_voice_id,
-                                model_id=elevenlabs_model,
-                                stability=voice_stability,
-                                similarity_boost=voice_similarity_boost,
-                                style=voice_style,
-                                use_speaker_boost=use_speaker_boost
+                                selected_elevenlabs_voice_id
                             )
                             if preview_audio:
                                 st.audio(preview_audio, format="audio/mpeg", autoplay=False)
                                 st.success("✅ Voice preview ready! Click play to hear it.")
                             else:
                                 st.error("❌ Failed to generate preview.")
-            
-            # Voice Quality Settings
-            st.markdown("### 🎚️ Voice Quality Settings")
-            st.info("💡 **Tip:** Adjust these settings to make the voice sound more natural and less robotic.")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                elevenlabs_model = st.selectbox(
-                    "AI Model",
-                    options=["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"],
-                    index=0,
-                    help="Newer models (turbo/flash) are faster and more natural. Multilingual v2 is older but more stable."
-                )
-                
-                voice_stability = st.slider(
-                    "Stability",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.5,
-                    step=0.1,
-                    help="Lower = more expressive/emotional, Higher = more stable/consistent (0.5 is balanced)"
-                )
-                
-                voice_similarity_boost = st.slider(
-                    "Similarity Boost",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.75,
-                    step=0.05,
-                    help="How closely the voice matches the original (higher = more accurate to voice, lower = more variation)"
-                )
-            
-            with col2:
-                voice_style = st.slider(
-                    "Style",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.0,
-                    step=0.1,
-                    help="Exaggeration of the voice style (0.0 = neutral, higher = more dramatic/expressive)"
-                )
-                
-                use_speaker_boost = st.checkbox(
-                    "Speaker Boost",
-                    value=True,
-                    help="Enhances similarity to the original speaker (recommended: ON for more realistic voice)"
-                )
             
             # Pacing options for natural-sounding dubbing
             st.markdown("### ⚡ Pacing Options")
@@ -1463,12 +1398,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     temp_audio.name,
                     selected_elevenlabs_voice_id,
                     max_speed_factor,
-                    allow_extension,
-                    model_id=elevenlabs_model,
-                    stability=voice_stability,
-                    similarity_boost=voice_similarity_boost,
-                    style=voice_style,
-                    use_speaker_boost=use_speaker_boost
+                    allow_extension
                 ):
                     audio_path = temp_audio.name
                     st.success("✅ Audio synthesis complete!")
