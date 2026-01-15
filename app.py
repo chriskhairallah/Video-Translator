@@ -908,9 +908,8 @@ def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
         st.error(f"SRT generation error: {str(e)}")
         return False
 
-<<<<<<< HEAD
-def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None, subtitle_color: str = "&Hffffff", outline_width: int = 0, outline_color: str = "&H000000") -> bool:
-=======
+
+
 def generate_ass_subtitles(script: List[Dict], output_path: str, font_family: str = "Arial", font_size: int = 28) -> bool:
     """Generate ASS subtitle file with custom styling from translated script"""
     try:
@@ -954,8 +953,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         st.error(f"ASS generation error: {str(e)}")
         return False
 
-def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None) -> bool:
->>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
+def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None, subtitle_color: str = "&Hffffff", outline_width: int = 2, outline_color: str = "&H000000") -> bool:
     """Combine video with optional new audio track and/or subtitles using FFmpeg"""
     try:
         # Build filter complex for subtitles if needed
@@ -973,16 +971,13 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
                 # ASS format - styling is already embedded in the file
                 subtitle_filter = f"ass={abs_subtitle_path}"
                 
-<<<<<<< HEAD
-            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour={subtitle_color},OutlineColour={outline_color},Bold=1,Italic=0,Alignment=2,Outline={outline_width},Shadow=0,BorderStyle=1,MarginV=30'"
-=======
                 # Add fontsdir if provided (needed for custom fonts)
                 if fonts_dir:
                     # Use forward slashes for fontsdir as well
                     abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:")
                     subtitle_filter += f":fontsdir={abs_fonts_dir}"
             else:
-                # SRT format - apply styling via force_style (fallback for compatibility)
+                # SRT format - apply styling via force_style with customizable colors and outline
                 subtitle_filter = f"subtitles={abs_subtitle_path}"
                 
                 # Add fontsdir if provided
@@ -991,9 +986,8 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
                     abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:")
                     subtitle_filter += f":fontsdir={abs_fonts_dir}"
                     
-                subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,BorderStyle=1,MarginV=30'"
+                subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour={subtitle_color},OutlineColour={outline_color},Bold=1,Italic=0,Alignment=2,Outline={outline_width},Shadow=0,BorderStyle=1,MarginV=30'"
             
->>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
@@ -1279,19 +1273,14 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     )
     
     # Subtitle customization options
-<<<<<<< HEAD
-    subtitle_font_size = 18
-    subtitle_font_family = "Arial"
+    subtitle_font_size = 28
+    subtitle_font_family = None  # Will be set by selectbox or default
     subtitle_color = "&Hffffff"  # Default: white
     outline_width = 2  # Default: 2px outline
     outline_color = "&H000000"  # Default: black
-=======
-    subtitle_font_size = 28
-    subtitle_font_family = None  # Will be set by selectbox or default
     local_fonts = []  # Initialize outside the if block
     default_fonts_dir = None
-    
->>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
+
     if add_subtitles:
         st.markdown("### Subtitle Customization")
         
@@ -1437,15 +1426,8 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             # Set a placeholder that will be updated during generation
             subtitle_font_family = "Custom Font (extracted during generation)"
         
-<<<<<<< HEAD
-        # Determine fonts_dir for FFmpeg
-        # If we uploaded a file, it will use a temp dir (handled in the generation logic)
-        # If we selected a font that exists in our local fonts/ folder, we use that folder
-        default_fonts_dir = "fonts" if subtitle_font_family in local_fonts else None
-        
-        # Preview of subtitle style
-        st.markdown("#### Preview:")
-        preview_text = "Sample Subtitle Text" if not st.session_state.translated_script else st.session_state.translated_script[0]['translated_text'][:50] + "..."
+
+        # Preview of subtitle style (moved below after color/outline controls)
         
         # FFmpeg font sizes are relative to video resolution (typically 1080p)
         # For accurate preview, we need to account for how videos are displayed
@@ -1527,7 +1509,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         </p>
         """
         st.markdown(preview_html, unsafe_allow_html=True)
-=======
+
         # Determine fonts_dir for FFmpeg (now local_fonts is defined)
         # Store in session state so it's available during video generation
         # Only set fonts_dir if it's actually a local font, otherwise clear it
@@ -1536,7 +1518,6 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         else:
             # Clear fonts_dir for system fonts
             st.session_state.subtitle_fonts_dir = None
->>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
     
     # Validation
     if not add_dubbing and not add_subtitles:
@@ -1675,16 +1656,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     temp_output.name,
                     subtitle_path,
                     subtitle_font_size,
-<<<<<<< HEAD
-                    subtitle_font_family,
+                    final_font_family,
                     fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None),
                     subtitle_color,
                     outline_width,
                     outline_color
-=======
-                    final_font_family,
-                    fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None)
->>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
                 ):
                     st.success("✅ Video generation complete!")
                     
