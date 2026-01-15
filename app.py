@@ -21,7 +21,6 @@ import requests
 # Optional import for font name extraction (only needed for custom font uploads)
 # Optional import for 11labs TTS
 try:
-    from elevenlabs import generate, voices, set_api_key
     from elevenlabs.client import ElevenLabs
     ELEVENLABS_AVAILABLE = True
 except ImportError:
@@ -121,7 +120,6 @@ ELEVENLABS_API_KEY = "sk_83268715149468e1c028af0b39575ad6647bda8d2846fab2"
 # Initialize 11labs if available
 if ELEVENLABS_AVAILABLE:
     try:
-        set_api_key(ELEVENLABS_API_KEY)
         ELEVENLABS_CLIENT = ElevenLabs(api_key=ELEVENLABS_API_KEY)
     except Exception:
         ELEVENLABS_CLIENT = None
@@ -558,10 +556,11 @@ def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str) -> b
     if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
         return False
     try:
-        audio = generate(
+        audio = ELEVENLABS_CLIENT.text_to_speech.convert(
             text=text,
-            voice=voice_id,
-            api_key=ELEVENLABS_API_KEY
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2",
+            output_format="mp3_44100_128"
         )
         with open(output_path, 'wb') as f:
             for chunk in audio:
@@ -576,10 +575,11 @@ def preview_voice_elevenlabs(text: str, voice_id: str) -> bytes:
     if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
         return None
     try:
-        audio = generate(
+        audio = ELEVENLABS_CLIENT.text_to_speech.convert(
             text=text,
-            voice=voice_id,
-            api_key=ELEVENLABS_API_KEY
+            voice_id=voice_id,
+            model_id="eleven_multilingual_v2",
+            output_format="mp3_44100_128"
         )
         audio_data = b""
         for chunk in audio:
