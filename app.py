@@ -16,8 +16,16 @@ from typing import List, Dict, Tuple, Optional
 from deep_translator import GoogleTranslator
 from io import BytesIO
 import time
+import requests
 
 # Optional import for font name extraction (only needed for custom font uploads)
+# Optional import for 11labs TTS
+try:
+    from elevenlabs import generate, voices, set_api_key
+    from elevenlabs.client import ElevenLabs
+    ELEVENLABS_AVAILABLE = True
+except ImportError:
+    ELEVENLABS_AVAILABLE = False
 try:
     from fontTools.ttLib import TTFont
     FONTTOOLS_AVAILABLE = True
@@ -27,7 +35,7 @@ except ImportError:
 
 # Page configuration
 st.set_page_config(
-    page_title="Video Translation & Dubbing App",
+    page_title="Video Translation App",
     page_icon="🎬",
     layout="wide"
 )
@@ -107,6 +115,19 @@ def scan_local_fonts():
     # Return just the names (without extension)
     return [f.stem for f in font_files]
 
+# 11labs API Key
+ELEVENLABS_API_KEY = "sk_83268715149468e1c028af0b39575ad6647bda8d2846fab2"
+
+# Initialize 11labs if available
+if ELEVENLABS_AVAILABLE:
+    try:
+        set_api_key(ELEVENLABS_API_KEY)
+        ELEVENLABS_CLIENT = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    except Exception:
+        ELEVENLABS_CLIENT = None
+else:
+    ELEVENLABS_CLIENT = None
+
 # Initialize session state
 if 'transcript_data' not in st.session_state:
     st.session_state.transcript_data = None
@@ -122,6 +143,8 @@ if 'edge_tts_voices' not in st.session_state:
     st.session_state.edge_tts_voices = None
 if 'selected_font_family' not in st.session_state:
     st.session_state.selected_font_family = None
+if 'elevenlabs_voices' not in st.session_state:
+    st.session_state.elevenlabs_voices = None
 
 # Language codes for translation and TTS
 LANGUAGE_CODES = {
@@ -508,6 +531,155 @@ def preview_voice(text: str, language_code: str, tld: str = "com",
     
     return None
 
+def get_elevenlabs_voices():
+    """Get all available ElevenLabs voices (cached)"""
+    if st.session_state.elevenlabs_voices is None:
+        if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+            return []
+        try:
+            voices_list = ELEVENLABS_CLIENT.voices.get_all()
+            # Convert to list format
+            voices_data = []
+            for voice in voices_list.voices:
+                voices_data.append({
+                    'voice_id': voice.voice_id,
+                    'name': voice.name,
+                    'category': voice.category if hasattr(voice, 'category') else 'unknown',
+                    'description': voice.description if hasattr(voice, 'description') else ''
+                })
+            st.session_state.elevenlabs_voices = voices_data
+        except Exception as e:
+            st.warning(f"Failed to load ElevenLabs voices: {str(e)}")
+            return []
+    return st.session_state.elevenlabs_voices
+
+def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str) -> bool:
+    """Generate TTS audio using ElevenLabs API"""
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        return False
+    try:
+        audio = generate(
+            text=text,
+            voice=voice_id,
+            api_key=ELEVENLABS_API_KEY
+        )
+        with open(output_path, 'wb') as f:
+            for chunk in audio:
+                f.write(chunk)
+        return True
+    except Exception as e:
+        st.warning(f"ElevenLabs TTS error: {str(e)}")
+        return False
+
+def preview_voice_elevenlabs(text: str, voice_id: str) -> bytes:
+    """Generate a preview audio sample using ElevenLabs"""
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        return None
+    try:
+        audio = generate(
+            text=text,
+            voice=voice_id,
+            api_key=ELEVENLABS_API_KEY
+        )
+        audio_data = b""
+        for chunk in audio:
+            audio_data += chunk
+        return audio_data
+    except Exception as e:
+        st.warning(f"ElevenLabs preview error: {str(e)}")
+        return None
+
+def create_dubbed_audio_elevenlabs(script: List[Dict], total_duration: float, output_path: str, 
+                                  voice_id: str, max_speed_factor: float = 1.15, 
+                                  allow_extension: float = 0.2) -> bool:
+    """Create synchronized dubbed audio track using ElevenLabs with natural pacing
+    
+    Args:
+        max_speed_factor: Maximum speed increase (1.15 = 15% faster max) to prevent rushing
+        allow_extension: Allow segments to extend up to this percentage (0.2 = 20% more time)
+    """
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        st.error("ElevenLabs is not available. Please install the elevenlabs package.")
+        return False
+    
+    try:
+        # Create silent audio track for the full duration
+        silence = AudioSegment.silent(duration=int(total_duration * 1000))
+        
+        with st.spinner("Generating audio clips with ElevenLabs..."):
+            temp_dir = tempfile.mkdtemp()
+            
+            for i, segment in enumerate(script):
+                start_time = segment['start']
+                end_time = segment['end']
+                text = segment['translated_text']
+                
+                if not text or text.strip() == "":
+                    continue
+                
+                # Generate TTS for this segment using ElevenLabs
+                temp_audio_path = os.path.join(temp_dir, f"segment_{i}.mp3")
+                
+                if not synthesize_audio_elevenlabs(text, voice_id, temp_audio_path):
+                    continue  # Skip this segment if synthesis fails
+                
+                # Load the generated audio (ElevenLabs outputs MP3)
+                audio_clip = AudioSegment.from_mp3(temp_audio_path)
+                
+                # Calculate duration and adjust if needed
+                segment_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+                audio_duration = len(audio_clip)
+                
+                # Natural pacing: Limit speed-up to prevent rushing
+                # Allow slight extension if needed for natural speech
+                
+                if audio_duration > segment_duration:
+                    # Audio is longer than segment
+                    speed_factor = audio_duration / segment_duration
+                    
+                    if speed_factor <= max_speed_factor:
+                        # Speed up within acceptable range (sounds natural)
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                        # Trim to exact duration after speedup
+                        if len(audio_clip) > segment_duration:
+                            audio_clip = audio_clip[:int(segment_duration)]
+                    else:
+                        # Too much speed-up needed - allow extension instead
+                        # Extend the segment duration slightly (up to allow_extension% more)
+                        extended_duration = segment_duration * (1 + allow_extension)
+                        if audio_duration <= extended_duration:
+                            # Use natural speed, allow extension (don't trim)
+                            pass
+                        else:
+                            # Still too long even with extension - use max speed
+                            audio_clip = audio_clip.speedup(playback_speed=max_speed_factor)
+                            # Trim to extended duration
+                            if len(audio_clip) > extended_duration:
+                                audio_clip = audio_clip[:int(extended_duration)]
+                elif audio_duration < segment_duration * 0.7:
+                    # Audio is much shorter - slightly slow down or pad with silence
+                    # Only slow down if it's really short (less than 70% of duration)
+                    speed_factor = audio_duration / (segment_duration * 0.85)
+                    if speed_factor < 0.9:  # Only slow down if more than 10% difference
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                
+                # Place at the correct timestamp
+                start_ms = int(start_time * 1000)
+                silence = silence.overlay(audio_clip, position=start_ms)
+            
+            # Export the final audio
+            silence.export(output_path, format="wav")
+            
+            # Cleanup
+            for file in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, file))
+            os.rmdir(temp_dir)
+        
+        return True
+    except Exception as e:
+        st.error(f"ElevenLabs audio creation error: {str(e)}")
+        return False
+
 def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: float, output_path: str, 
                        tld: str = "com", tts_provider: str = "edge", voice: Optional[str] = None,
                        max_speed_factor: float = 1.15, allow_extension: float = 0.2) -> bool:
@@ -804,8 +976,8 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
         return False
 
 # Main UI
-st.title("🎬 Video Translation & Dubbing Application")
-st.markdown("Upload a video, transcribe it, translate the script, and generate a dubbed version!")
+st.title("🎬 Video Translation Application")
+st.markdown("Upload a video, transcribe it, translate the script, and generate a translated version with subtitles!")
 
 # Check FFmpeg installation
 if not check_ffmpeg():
@@ -887,7 +1059,7 @@ if st.session_state.transcript_data:
         "Select Target Language",
         options=available_languages,
         index=default_index,
-        help="Choose the language for translation and dubbing. You can select English even if the video is in English to edit text or add subtitles."
+        help="Choose the language for translation. You can select English even if the video is in English to edit text or add subtitles."
     )
     
     if st.button("🌍 Translate Script", type="primary"):
@@ -939,143 +1111,110 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     
     st.subheader("Output Options")
     
-    # Separate options for dubbing and subtitles
+    # 11labs Dubbing Options
     add_dubbing = st.checkbox(
-        "🔊 Add Dubbed Audio (BETA)",
+        "🔊 Add Dubbed Audio (ElevenLabs)",
         value=False,
-        help="Replace the original audio with translated TTS audio"
+        help="Replace the original audio with translated voice using ElevenLabs AI voices"
     )
     
-    # Voice selection for dubbing (initialize defaults)
-    selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
-    selected_tld = "com"
-    selected_tts_provider = "edge"  # Default to Edge TTS for better quality
-    selected_edge_voice = None
+    # Initialize dubbing variables
+    selected_elevenlabs_voice_id = None
+    selected_elevenlabs_voice_name = None
     max_speed_factor = 1.15  # Default: 15% max speed increase
     allow_extension = 0.2  # Default: 20% time extension allowed
     
     if add_dubbing:
-        st.markdown("### TTS Provider & Voice Selection")
-        
-        # TTS Provider selection
-        # Note: Edge TTS may have 403 errors due to Microsoft API restrictions
-        # Default to gTTS if Edge TTS is unreliable
-        tts_provider = st.selectbox(
-            "TTS Provider",
-            options=["gtts", "edge"],
-            index=0,
-            format_func=lambda x: "Google TTS (gTTS) - Reliable" if x == "gtts" else "Edge TTS (Microsoft) - May have access issues",
-            help="gTTS is more reliable. Edge TTS may have 403 errors due to Microsoft API restrictions, but will automatically fall back to gTTS if it fails."
-        )
-        selected_tts_provider = tts_provider
-        
-        if tts_provider == "edge":
-            # Show warning about potential 403 errors
-            st.info("⚠️ **Note:** Edge TTS may encounter 403 errors due to Microsoft API restrictions. The app will automatically fall back to gTTS if Edge TTS fails.")
+        if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+            st.error("❌ ElevenLabs is not available. Please install the elevenlabs package: `pip install elevenlabs`")
+            add_dubbing = False
+        else:
+            st.markdown("### ElevenLabs Voice Selection")
             
-            # Edge TTS voice selection
-            lang_code = LANGUAGE_CODES.get(target_language, "en")
-            edge_voices = get_edge_voices_for_language(lang_code)
+            # Get ElevenLabs voices
+            voices = get_elevenlabs_voices()
             
-            if edge_voices:
+            if voices:
                 # Create voice display names
                 voice_options = []
                 voice_map = {}
-                for voice in edge_voices:
-                    gender = voice.get("Gender", "Unknown")
-                    locale = voice.get("Locale", "Unknown")
-                    name = voice.get("ShortName", "")
-                    friendly_name = f"{voice.get('FriendlyName', name)} ({gender}, {locale})"
-                    voice_options.append(friendly_name)
-                    voice_map[friendly_name] = voice["ShortName"]
+                for voice in voices:
+                    name = voice['name']
+                    description = voice.get('description', '')
+                    category = voice.get('category', '')
+                    display_name = f"{name}"
+                    if description:
+                        display_name += f" - {description}"
+                    if category:
+                        display_name += f" ({category})"
+                    voice_options.append(display_name)
+                    voice_map[display_name] = voice['voice_id']
                 
                 selected_voice_display = st.selectbox(
                     "Choose Voice",
                     options=voice_options,
                     index=0,
-                    help="Select a voice for dubbing. Edge TTS offers high-quality, natural-sounding voices."
+                    help="Select an ElevenLabs voice for dubbing. These are high-quality AI voices."
                 )
-                selected_edge_voice = voice_map[selected_voice_display]
+                selected_elevenlabs_voice_id = voice_map[selected_voice_display]
+                selected_elevenlabs_voice_name = selected_voice_display.split(' -')[0]  # Extract just the name
             else:
-                st.warning(f"No Edge TTS voices found for {target_language}. Falling back to gTTS.")
-                selected_tts_provider = "gtts"
-        else:
-            # gTTS voice selection (original logic)
-            if target_language in VOICE_OPTIONS:
-                voice_options = VOICE_OPTIONS[target_language]
-                selected_voice_name = st.selectbox(
-                    "Choose Voice",
-                    options=list(voice_options.keys()),
-                    index=0,
-                    help="Select a voice for the dubbing. Different options may have slight variations in accent or tone."
+                st.warning("No ElevenLabs voices found. Please check your API key.")
+                add_dubbing = False
+            
+            # Voice preview
+            if selected_elevenlabs_voice_id and st.session_state.translated_script and len(st.session_state.translated_script) > 0:
+                preview_text = st.session_state.translated_script[0]['translated_text'][:100]
+                if len(st.session_state.translated_script[0]['translated_text']) > 100:
+                    preview_text += "..."
+            else:
+                preview_text = "Hello, this is a voice preview."
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                preview_text_input = st.text_input(
+                    "Preview Text",
+                    value=preview_text,
+                    help="Text to use for voice preview"
                 )
-                voice_config = voice_options[selected_voice_name]
-                if isinstance(voice_config, dict):
-                    selected_voice_code = voice_config["lang"]
-                    selected_tld = voice_config["tld"]
-                else:
-                    selected_voice_code = voice_config
-                    selected_tld = "com"
-            else:
-                st.info(f"Using default voice for {target_language}")
-                selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
-                selected_tld = "com"
-        
-        # Voice preview
-        if st.session_state.translated_script and len(st.session_state.translated_script) > 0:
-            preview_text = st.session_state.translated_script[0]['translated_text'][:100]
-            if len(st.session_state.translated_script[0]['translated_text']) > 100:
-                preview_text += "..."
-        else:
-            preview_text = "Hello, this is a voice preview."
-        
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            preview_text_input = st.text_input(
-                "Preview Text",
-                value=preview_text,
-                help="Text to use for voice preview"
-            )
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-            if st.button("🔊 Preview Voice", use_container_width=True):
-                with st.spinner("Generating preview..."):
-                    if selected_tts_provider == "edge" and selected_edge_voice:
-                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
-                                                     selected_tts_provider, selected_edge_voice)
-                    else:
-                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
-                                                     selected_tts_provider)
-                    if preview_audio:
-                        st.audio(preview_audio, format="audio/mpeg", autoplay=False)
-                        st.success("✅ Voice preview ready! Click play to hear it.")
-        
-        # Pacing options for natural-sounding dubbing
-        st.markdown("### ⚡ Pacing Options")
-        st.info("💡 **Tip:** For languages like French that are more verbose, adjust these settings to prevent rushed speech.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            max_speed = st.slider(
-                "Max Speed Increase (%)",
-                min_value=5,
-                max_value=30,
-                value=15,
-                step=5,
-                help="Maximum speed increase to prevent rushing. Lower values = more natural pacing (recommended: 10-15% for verbose languages)"
-            )
-            max_speed_factor = 1.0 + (max_speed / 100.0)
-        
-        with col2:
-            allow_extension_pct = st.slider(
-                "Allow Time Extension (%)",
-                min_value=0,
-                max_value=30,
-                value=20,
-                step=5,
-                help="Allow segments to extend beyond original timing for natural speech. Higher values = more flexible timing"
-            )
-            allow_extension = allow_extension_pct / 100.0
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # Spacing
+                if st.button("🔊 Preview Voice", use_container_width=True):
+                    if selected_elevenlabs_voice_id:
+                        with st.spinner("Generating preview..."):
+                            preview_audio = preview_voice_elevenlabs(preview_text_input, selected_elevenlabs_voice_id)
+                            if preview_audio:
+                                st.audio(preview_audio, format="audio/mpeg", autoplay=False)
+                                st.success("✅ Voice preview ready! Click play to hear it.")
+                            else:
+                                st.error("❌ Failed to generate preview.")
+            
+            # Pacing options for natural-sounding dubbing
+            st.markdown("### ⚡ Pacing Options")
+            st.info("💡 **Tip:** Adjust these settings to prevent rushed speech and ensure natural pacing.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                max_speed = st.slider(
+                    "Max Speed Increase (%)",
+                    min_value=5,
+                    max_value=30,
+                    value=15,
+                    step=5,
+                    help="Maximum speed increase to prevent rushing. Lower values = more natural pacing (recommended: 10-15% for verbose languages)"
+                )
+                max_speed_factor = 1.0 + (max_speed / 100.0)
+            
+            with col2:
+                allow_extension_pct = st.slider(
+                    "Allow Time Extension (%)",
+                    min_value=0,
+                    max_value=30,
+                    value=20,
+                    step=5,
+                    help="Allow segments to extend beyond original timing for natural speech. Higher values = more flexible timing"
+                )
+                allow_extension = allow_extension_pct / 100.0
     
     add_subtitles = st.checkbox(
         "📝 Add Subtitles",
@@ -1195,10 +1334,8 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         
         with st.spinner(f"Generating video with {desc_text} (this may take a few minutes)..."):
             # Create temporary files
-            temp_audio = None
             temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
             temp_output.close()
-            temp_srt = None
             
             # Step 1: Create dubbed audio if requested
             audio_path = None
@@ -1207,14 +1344,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
                 temp_audio.close()
                 
-                if create_dubbed_audio(
+                if create_dubbed_audio_elevenlabs(
                     st.session_state.translated_script,
-                    selected_voice_code,
                     total_duration,
                     temp_audio.name,
-                    selected_tld,
-                    selected_tts_provider,
-                    selected_edge_voice,
+                    selected_elevenlabs_voice_id,
                     max_speed_factor,
                     allow_extension
                 ):
@@ -1300,7 +1434,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         fonts_dir = "/System/Library/Fonts"
                     elif system == "Linux":
                          fonts_dir = "/usr/share/fonts"
-                
+            
                 # Generate subtitles with ASS format (embeds font styling directly)
                 if add_subtitles:
                     temp_ass = tempfile.NamedTemporaryFile(delete=False, suffix='.ass', mode='w')
@@ -1380,7 +1514,7 @@ with st.sidebar:
     2. **Transcribe**: Click "Transcribe Video" to extract and transcribe audio
     3. **Translate**: Select target language and click "Translate Script"
     4. **Edit**: Review and edit the translated text as needed
-    5. **Generate**: Click "Generate Dubbed Video" to create the final output
-    6. **Download**: Download your translated and dubbed video
+    5. **Generate**: Click "Generate Video" to create the final output with dubbing and/or subtitles
+    6. **Download**: Download your translated video with dubbing and subtitles
     """)
 
