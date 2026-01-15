@@ -16,11 +16,25 @@ from typing import List, Dict, Tuple, Optional
 from deep_translator import GoogleTranslator
 from io import BytesIO
 import time
-from fontTools.ttLib import TTFont
+import requests
+
+# Optional import for font name extraction (only needed for custom font uploads)
+# Optional import for 11labs TTS
+try:
+    from elevenlabs.client import ElevenLabs
+    ELEVENLABS_AVAILABLE = True
+except ImportError:
+    ELEVENLABS_AVAILABLE = False
+try:
+    from fontTools.ttLib import TTFont
+    FONTTOOLS_AVAILABLE = True
+except ImportError:
+    TTFont = None
+    FONTTOOLS_AVAILABLE = False
 
 # Page configuration
 st.set_page_config(
-    page_title="Video Translation & Dubbing App",
+    page_title="Video Translation App",
     page_icon="🎬",
     layout="wide"
 )
@@ -100,6 +114,18 @@ def scan_local_fonts():
     # Return just the names (without extension)
     return [f.stem for f in font_files]
 
+# 11labs API Key
+ELEVENLABS_API_KEY = "sk_0241382673e28ce55cae2878110d6ed62b6bd89eebb0ecc0"
+
+# Initialize 11labs if available
+if ELEVENLABS_AVAILABLE:
+    try:
+        ELEVENLABS_CLIENT = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    except Exception:
+        ELEVENLABS_CLIENT = None
+else:
+    ELEVENLABS_CLIENT = None
+
 # Initialize session state
 if 'transcript_data' not in st.session_state:
     st.session_state.transcript_data = None
@@ -113,6 +139,10 @@ if 'detected_language' not in st.session_state:
     st.session_state.detected_language = None
 if 'edge_tts_voices' not in st.session_state:
     st.session_state.edge_tts_voices = None
+if 'selected_font_family' not in st.session_state:
+    st.session_state.selected_font_family = None
+if 'elevenlabs_voices' not in st.session_state:
+    st.session_state.elevenlabs_voices = None
 
 # Language codes for translation and TTS
 LANGUAGE_CODES = {
@@ -499,6 +529,202 @@ def preview_voice(text: str, language_code: str, tld: str = "com",
     
     return None
 
+def get_elevenlabs_voices():
+    """Get all available ElevenLabs voices (cached)"""
+    if st.session_state.elevenlabs_voices is None:
+        if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+            return []
+        try:
+            voices_list = ELEVENLABS_CLIENT.voices.get_all()
+            # Convert to list format
+            voices_data = []
+            for voice in voices_list.voices:
+                voices_data.append({
+                    'voice_id': voice.voice_id,
+                    'name': voice.name,
+                    'category': voice.category if hasattr(voice, 'category') else 'unknown',
+                    'description': voice.description if hasattr(voice, 'description') else ''
+                })
+            st.session_state.elevenlabs_voices = voices_data
+        except Exception as e:
+            st.warning(f"Failed to load ElevenLabs voices: {str(e)}")
+            return []
+    return st.session_state.elevenlabs_voices
+
+def synthesize_audio_elevenlabs(text: str, voice_id: str, output_path: str, 
+                                 model_id: str = "eleven_turbo_v2_5",
+                                 stability: float = 0.5,
+                                 similarity_boost: float = 0.75,
+                                 style: float = 0.0,
+                                 use_speaker_boost: bool = True) -> bool:
+    """Generate TTS audio using ElevenLabs API with quality settings"""
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        return False
+    try:
+        audio = ELEVENLABS_CLIENT.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id=model_id,
+            output_format="mp3_44100_128",  # 128kbps - available for Starter tier
+            voice_settings={
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "style": style,
+                "use_speaker_boost": use_speaker_boost
+            }
+        )
+        with open(output_path, 'wb') as f:
+            for chunk in audio:
+                f.write(chunk)
+        return True
+    except Exception as e:
+        error_msg = str(e)
+        # Try to extract user-friendly error message from ElevenLabs API response
+        if "detected_unusual_activity" in error_msg or "401" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: Your account has been flagged for unusual activity. "
+                    "Free Tier usage has been disabled. Please:\n"
+                    "- Check your ElevenLabs account status\n"
+                    "- Disable any VPN/proxy if you're using one\n"
+                    "- Consider upgrading to a Paid Plan\n"
+                    "- Verify your API key is valid and has sufficient credits")
+        elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            st.error("❌ **ElevenLabs API Error**: Invalid or expired API key. Please check your API key in the code.")
+        elif "output_format_not_allowed" in error_msg or "403" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: The requested output format is not available for your subscription tier. "
+                    "Please check your ElevenLabs plan or contact support.")
+        else:
+            st.warning(f"ElevenLabs TTS error: {error_msg}")
+        return False
+
+def preview_voice_elevenlabs(text: str, voice_id: str,
+                             model_id: str = "eleven_turbo_v2_5",
+                             stability: float = 0.5,
+                             similarity_boost: float = 0.75,
+                             style: float = 0.0,
+                             use_speaker_boost: bool = True) -> bytes:
+    """Generate a preview audio sample using ElevenLabs with quality settings"""
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        return None
+    try:
+        audio = ELEVENLABS_CLIENT.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id=model_id,
+            output_format="mp3_44100_128",  # 128kbps - available for Starter tier
+            voice_settings={
+                "stability": stability,
+                "similarity_boost": similarity_boost,
+                "style": style,
+                "use_speaker_boost": use_speaker_boost
+            }
+        )
+        audio_data = b""
+        for chunk in audio:
+            audio_data += chunk
+        return audio_data
+    except Exception as e:
+        error_msg = str(e)
+        # Try to extract user-friendly error message from ElevenLabs API response
+        if "detected_unusual_activity" in error_msg or "401" in error_msg:
+            st.error("❌ **ElevenLabs API Error**: Your account has been flagged for unusual activity. "
+                    "Free Tier usage has been disabled. Please check your account status or upgrade to a Paid Plan.")
+        elif "api_key" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            st.error("❌ **ElevenLabs API Error**: Invalid or expired API key. Please check your API key.")
+        else:
+            st.warning(f"ElevenLabs preview error: {error_msg}")
+        return None
+
+def create_dubbed_audio_elevenlabs(script: List[Dict], total_duration: float, output_path: str, 
+                                  voice_id: str, max_speed_factor: float = 1.15, 
+                                  allow_extension: float = 0.2) -> bool:
+    """Create synchronized dubbed audio track using ElevenLabs with natural pacing
+    
+    Args:
+        max_speed_factor: Maximum speed increase (1.15 = 15% faster max) to prevent rushing
+        allow_extension: Allow segments to extend up to this percentage (0.2 = 20% more time)
+    """
+    if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+        st.error("ElevenLabs is not available. Please install the elevenlabs package.")
+        return False
+    
+    try:
+        # Create silent audio track for the full duration
+        silence = AudioSegment.silent(duration=int(total_duration * 1000))
+        
+        with st.spinner("Generating audio clips with ElevenLabs..."):
+            temp_dir = tempfile.mkdtemp()
+            
+            for i, segment in enumerate(script):
+                start_time = segment['start']
+                end_time = segment['end']
+                text = segment['translated_text']
+                
+                if not text or text.strip() == "":
+                    continue
+                
+                # Generate TTS for this segment using ElevenLabs
+                temp_audio_path = os.path.join(temp_dir, f"segment_{i}.mp3")
+                
+                if not synthesize_audio_elevenlabs(text, voice_id, temp_audio_path):
+                    continue  # Skip this segment if synthesis fails
+                
+                # Load the generated audio (ElevenLabs outputs MP3)
+                audio_clip = AudioSegment.from_mp3(temp_audio_path)
+                
+                # Calculate duration and adjust if needed
+                segment_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+                audio_duration = len(audio_clip)
+                
+                # Natural pacing: Limit speed-up to prevent rushing
+                # Allow slight extension if needed for natural speech
+                
+                if audio_duration > segment_duration:
+                    # Audio is longer than segment
+                    speed_factor = audio_duration / segment_duration
+                    
+                    if speed_factor <= max_speed_factor:
+                        # Speed up within acceptable range (sounds natural)
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                        # Trim to exact duration after speedup
+                        if len(audio_clip) > segment_duration:
+                            audio_clip = audio_clip[:int(segment_duration)]
+                    else:
+                        # Too much speed-up needed - allow extension instead
+                        # Extend the segment duration slightly (up to allow_extension% more)
+                        extended_duration = segment_duration * (1 + allow_extension)
+                        if audio_duration <= extended_duration:
+                            # Use natural speed, allow extension (don't trim)
+                            pass
+                        else:
+                            # Still too long even with extension - use max speed
+                            audio_clip = audio_clip.speedup(playback_speed=max_speed_factor)
+                            # Trim to extended duration
+                            if len(audio_clip) > extended_duration:
+                                audio_clip = audio_clip[:int(extended_duration)]
+                elif audio_duration < segment_duration * 0.7:
+                    # Audio is much shorter - slightly slow down or pad with silence
+                    # Only slow down if it's really short (less than 70% of duration)
+                    speed_factor = audio_duration / (segment_duration * 0.85)
+                    if speed_factor < 0.9:  # Only slow down if more than 10% difference
+                        audio_clip = audio_clip.speedup(playback_speed=speed_factor)
+                
+                # Place at the correct timestamp
+                start_ms = int(start_time * 1000)
+                silence = silence.overlay(audio_clip, position=start_ms)
+            
+            # Export the final audio
+            silence.export(output_path, format="wav")
+            
+            # Cleanup
+            for file in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, file))
+            os.rmdir(temp_dir)
+        
+        return True
+    except Exception as e:
+        st.error(f"ElevenLabs audio creation error: {str(e)}")
+        return False
+
 def create_dubbed_audio(script: List[Dict], language_code: str, total_duration: float, output_path: str, 
                        tld: str = "com", tts_provider: str = "edge", voice: Optional[str] = None,
                        max_speed_factor: float = 1.15, allow_extension: float = 0.2) -> bool:
@@ -606,7 +832,11 @@ def get_font_name(font_path):
     """
     Extract the internal font family name from a font file using fonttools.
     This is what FFmpeg uses to match the font.
+    Returns None if fonttools is not available or if extraction fails.
     """
+    if not FONTTOOLS_AVAILABLE:
+        return None
+    
     try:
         font = TTFont(font_path)
         name_table = font['name']
@@ -646,6 +876,14 @@ def get_font_name(font_path):
         print(f"Error extracting font name: {e}")
         return None
 
+def format_ass_timestamp(seconds: float) -> str:
+    """Convert seconds to ASS timestamp format (H:MM:SS.cc)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    centis = int((seconds % 1) * 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
+
 def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
     """Generate SRT subtitle file from translated script"""
     try:
@@ -670,7 +908,54 @@ def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
         st.error(f"SRT generation error: {str(e)}")
         return False
 
+<<<<<<< HEAD
 def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None, subtitle_color: str = "&Hffffff", outline_width: int = 0, outline_color: str = "&H000000") -> bool:
+=======
+def generate_ass_subtitles(script: List[Dict], output_path: str, font_family: str = "Arial", font_size: int = 28) -> bool:
+    """Generate ASS subtitle file with custom styling from translated script"""
+    try:
+        # ASS header with styling
+        ass_header = f"""[Script Info]
+; Script generated by Video Translator
+Title: Translated Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_family},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,2,10,10,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(ass_header)
+            
+            for segment in script:
+                start_time = format_ass_timestamp(segment['start'])
+                end_time = format_ass_timestamp(segment['end'])
+                text = segment['translated_text'].strip()
+                
+                if not text:
+                    continue
+                
+                # Escape special ASS characters
+                text = text.replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
+                
+                # Write dialogue line
+                f.write(f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}\n")
+        
+        return True
+    except Exception as e:
+        st.error(f"ASS generation error: {str(e)}")
+        return False
+
+def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None) -> bool:
+>>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
     """Combine video with optional new audio track and/or subtitles using FFmpeg"""
     try:
         # Build filter complex for subtitles if needed
@@ -680,20 +965,35 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
             # Use absolute path and escape single quotes
             # CRITICAL FIX: Replace backslashes with forward slashes for Windows FFmpeg compatibility
             # FFmpeg filter strings require forward slashes even on Windows
-            abs_subtitle_path = os.path.abspath(subtitle_path).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
+            abs_subtitle_path = os.path.abspath(subtitle_path).replace('\\', '/').replace(":", "\\:")
             
-            # Burn subtitles into video using FFmpeg subtitles filter
-            # Style: White text, black outline, bottom center, customizable font size and family
-            # MarginV controls distance from bottom (30px default)
-            subtitle_filter = f"subtitles='{abs_subtitle_path}'"
-            
-            # Add fontsdir if provided
-            if fonts_dir:
-                # Use forward slashes for fontsdir as well
-                abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
-                subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
+            # For ASS files, use ass filter which respects the embedded styling
+            # For SRT files, use subtitles filter with force_style (less reliable)
+            if subtitle_path.endswith('.ass'):
+                # ASS format - styling is already embedded in the file
+                subtitle_filter = f"ass={abs_subtitle_path}"
                 
+<<<<<<< HEAD
             subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour={subtitle_color},OutlineColour={outline_color},Bold=1,Italic=0,Alignment=2,Outline={outline_width},Shadow=0,BorderStyle=1,MarginV=30'"
+=======
+                # Add fontsdir if provided (needed for custom fonts)
+                if fonts_dir:
+                    # Use forward slashes for fontsdir as well
+                    abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:")
+                    subtitle_filter += f":fontsdir={abs_fonts_dir}"
+            else:
+                # SRT format - apply styling via force_style (fallback for compatibility)
+                subtitle_filter = f"subtitles={abs_subtitle_path}"
+                
+                # Add fontsdir if provided
+                if fonts_dir:
+                    # Use forward slashes for fontsdir as well
+                    abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:")
+                    subtitle_filter += f":fontsdir={abs_fonts_dir}"
+                    
+                subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,BorderStyle=1,MarginV=30'"
+            
+>>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
@@ -729,8 +1029,8 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
         return False
 
 # Main UI
-st.title("🎬 Video Translation & Dubbing Application")
-st.markdown("Upload a video, transcribe it, translate the script, and generate a dubbed version!")
+st.title("🎬 Video Translation Application")
+st.markdown("Upload a video, transcribe it, translate the script, and generate a translated version with subtitles!")
 
 # Check FFmpeg installation
 if not check_ffmpeg():
@@ -812,7 +1112,7 @@ if st.session_state.transcript_data:
         "Select Target Language",
         options=available_languages,
         index=default_index,
-        help="Choose the language for translation and dubbing. You can select English even if the video is in English to edit text or add subtitles."
+        help="Choose the language for translation. You can select English even if the video is in English to edit text or add subtitles."
     )
     
     if st.button("🌍 Translate Script", type="primary"):
@@ -864,143 +1164,113 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     
     st.subheader("Output Options")
     
-    # Separate options for dubbing and subtitles
+    # 11labs Dubbing Options
     add_dubbing = st.checkbox(
-        "🔊 Add Dubbed Audio (BETA)",
+        "🔊 Add Dubbed Audio (ElevenLabs)",
         value=False,
-        help="Replace the original audio with translated TTS audio"
+        help="Replace the original audio with translated voice using ElevenLabs AI voices"
     )
     
-    # Voice selection for dubbing (initialize defaults)
-    selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
-    selected_tld = "com"
-    selected_tts_provider = "edge"  # Default to Edge TTS for better quality
-    selected_edge_voice = None
+    # Initialize dubbing variables
+    selected_elevenlabs_voice_id = None
+    selected_elevenlabs_voice_name = None
     max_speed_factor = 1.15  # Default: 15% max speed increase
     allow_extension = 0.2  # Default: 20% time extension allowed
     
     if add_dubbing:
-        st.markdown("### TTS Provider & Voice Selection")
-        
-        # TTS Provider selection
-        # Note: Edge TTS may have 403 errors due to Microsoft API restrictions
-        # Default to gTTS if Edge TTS is unreliable
-        tts_provider = st.selectbox(
-            "TTS Provider",
-            options=["gtts", "edge"],
-            index=0,
-            format_func=lambda x: "Google TTS (gTTS) - Reliable" if x == "gtts" else "Edge TTS (Microsoft) - May have access issues",
-            help="gTTS is more reliable. Edge TTS may have 403 errors due to Microsoft API restrictions, but will automatically fall back to gTTS if it fails."
-        )
-        selected_tts_provider = tts_provider
-        
-        if tts_provider == "edge":
-            # Show warning about potential 403 errors
-            st.info("⚠️ **Note:** Edge TTS may encounter 403 errors due to Microsoft API restrictions. The app will automatically fall back to gTTS if Edge TTS fails.")
+        if not ELEVENLABS_AVAILABLE or not ELEVENLABS_CLIENT:
+            st.error("❌ ElevenLabs is not available. Please install the elevenlabs package: `pip install elevenlabs`")
+            add_dubbing = False
+        else:
+            st.markdown("### ElevenLabs Voice Selection")
             
-            # Edge TTS voice selection
-            lang_code = LANGUAGE_CODES.get(target_language, "en")
-            edge_voices = get_edge_voices_for_language(lang_code)
+            # Get ElevenLabs voices
+            voices = get_elevenlabs_voices()
             
-            if edge_voices:
+            if voices:
                 # Create voice display names
                 voice_options = []
                 voice_map = {}
-                for voice in edge_voices:
-                    gender = voice.get("Gender", "Unknown")
-                    locale = voice.get("Locale", "Unknown")
-                    name = voice.get("ShortName", "")
-                    friendly_name = f"{voice.get('FriendlyName', name)} ({gender}, {locale})"
-                    voice_options.append(friendly_name)
-                    voice_map[friendly_name] = voice["ShortName"]
+                for voice in voices:
+                    name = voice['name']
+                    description = voice.get('description', '')
+                    category = voice.get('category', '')
+                    display_name = f"{name}"
+                    if description:
+                        display_name += f" - {description}"
+                    if category:
+                        display_name += f" ({category})"
+                    voice_options.append(display_name)
+                    voice_map[display_name] = voice['voice_id']
                 
                 selected_voice_display = st.selectbox(
                     "Choose Voice",
                     options=voice_options,
                     index=0,
-                    help="Select a voice for dubbing. Edge TTS offers high-quality, natural-sounding voices."
+                    help="Select an ElevenLabs voice for dubbing. These are high-quality AI voices."
                 )
-                selected_edge_voice = voice_map[selected_voice_display]
+                selected_elevenlabs_voice_id = voice_map[selected_voice_display]
+                selected_elevenlabs_voice_name = selected_voice_display.split(' -')[0]  # Extract just the name
             else:
-                st.warning(f"No Edge TTS voices found for {target_language}. Falling back to gTTS.")
-                selected_tts_provider = "gtts"
-        else:
-            # gTTS voice selection (original logic)
-            if target_language in VOICE_OPTIONS:
-                voice_options = VOICE_OPTIONS[target_language]
-                selected_voice_name = st.selectbox(
-                    "Choose Voice",
-                    options=list(voice_options.keys()),
-                    index=0,
-                    help="Select a voice for the dubbing. Different options may have slight variations in accent or tone."
+                st.warning("No ElevenLabs voices found. Please check your API key.")
+                add_dubbing = False
+            
+            # Voice preview
+            if selected_elevenlabs_voice_id and st.session_state.translated_script and len(st.session_state.translated_script) > 0:
+                preview_text = st.session_state.translated_script[0]['translated_text'][:100]
+                if len(st.session_state.translated_script[0]['translated_text']) > 100:
+                    preview_text += "..."
+            else:
+                preview_text = "Hello, this is a voice preview."
+            
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                preview_text_input = st.text_input(
+                    "Preview Text",
+                    value=preview_text,
+                    help="Text to use for voice preview"
                 )
-                voice_config = voice_options[selected_voice_name]
-                if isinstance(voice_config, dict):
-                    selected_voice_code = voice_config["lang"]
-                    selected_tld = voice_config["tld"]
-                else:
-                    selected_voice_code = voice_config
-                    selected_tld = "com"
-            else:
-                st.info(f"Using default voice for {target_language}")
-                selected_voice_code = LANGUAGE_CODES.get(target_language, "en")
-                selected_tld = "com"
-        
-        # Voice preview
-        if st.session_state.translated_script and len(st.session_state.translated_script) > 0:
-            preview_text = st.session_state.translated_script[0]['translated_text'][:100]
-            if len(st.session_state.translated_script[0]['translated_text']) > 100:
-                preview_text += "..."
-        else:
-            preview_text = "Hello, this is a voice preview."
-        
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            preview_text_input = st.text_input(
-                "Preview Text",
-                value=preview_text,
-                help="Text to use for voice preview"
-            )
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-            if st.button("🔊 Preview Voice", use_container_width=True):
-                with st.spinner("Generating preview..."):
-                    if selected_tts_provider == "edge" and selected_edge_voice:
-                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
-                                                     selected_tts_provider, selected_edge_voice)
-                    else:
-                        preview_audio = preview_voice(preview_text_input, selected_voice_code, selected_tld, 
-                                                     selected_tts_provider)
-                    if preview_audio:
-                        st.audio(preview_audio, format="audio/mpeg", autoplay=False)
-                        st.success("✅ Voice preview ready! Click play to hear it.")
-        
-        # Pacing options for natural-sounding dubbing
-        st.markdown("### ⚡ Pacing Options")
-        st.info("💡 **Tip:** For languages like French that are more verbose, adjust these settings to prevent rushed speech.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            max_speed = st.slider(
-                "Max Speed Increase (%)",
-                min_value=5,
-                max_value=30,
-                value=15,
-                step=5,
-                help="Maximum speed increase to prevent rushing. Lower values = more natural pacing (recommended: 10-15% for verbose languages)"
-            )
-            max_speed_factor = 1.0 + (max_speed / 100.0)
-        
-        with col2:
-            allow_extension_pct = st.slider(
-                "Allow Time Extension (%)",
-                min_value=0,
-                max_value=30,
-                value=20,
-                step=5,
-                help="Allow segments to extend beyond original timing for natural speech. Higher values = more flexible timing"
-            )
-            allow_extension = allow_extension_pct / 100.0
+            with col2:
+                st.markdown("<br>", unsafe_allow_html=True)  # Spacing
+                if st.button("🔊 Preview Voice", use_container_width=True):
+                    if selected_elevenlabs_voice_id:
+                        with st.spinner("Generating preview..."):
+                            preview_audio = preview_voice_elevenlabs(
+                                preview_text_input, 
+                                selected_elevenlabs_voice_id
+                            )
+                            if preview_audio:
+                                st.audio(preview_audio, format="audio/mpeg", autoplay=False)
+                                st.success("✅ Voice preview ready! Click play to hear it.")
+                            else:
+                                st.error("❌ Failed to generate preview.")
+            
+            # Pacing options for natural-sounding dubbing
+            st.markdown("### ⚡ Pacing Options")
+            st.info("💡 **Tip:** Adjust these settings to prevent rushed speech and ensure natural pacing.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                max_speed = st.slider(
+                    "Max Speed Increase (%)",
+                    min_value=5,
+                    max_value=30,
+                    value=15,
+                    step=5,
+                    help="Maximum speed increase to prevent rushing. Lower values = more natural pacing (recommended: 10-15% for verbose languages)"
+                )
+                max_speed_factor = 1.0 + (max_speed / 100.0)
+            
+            with col2:
+                allow_extension_pct = st.slider(
+                    "Allow Time Extension (%)",
+                    min_value=0,
+                    max_value=30,
+                    value=20,
+                    step=5,
+                    help="Allow segments to extend beyond original timing for natural speech. Higher values = more flexible timing"
+                )
+                allow_extension = allow_extension_pct / 100.0
     
     add_subtitles = st.checkbox(
         "📝 Add Subtitles",
@@ -1009,25 +1279,37 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     )
     
     # Subtitle customization options
+<<<<<<< HEAD
     subtitle_font_size = 18
     subtitle_font_family = "Arial"
     subtitle_color = "&Hffffff"  # Default: white
     outline_width = 2  # Default: 2px outline
     outline_color = "&H000000"  # Default: black
+=======
+    subtitle_font_size = 28
+    subtitle_font_family = None  # Will be set by selectbox or default
+    local_fonts = []  # Initialize outside the if block
+    default_fonts_dir = None
+    
+>>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
     if add_subtitles:
         st.markdown("### Subtitle Customization")
         
         col1, col2 = st.columns(2)
         
         with col1:
+            # Use key for font size slider to maintain state
             subtitle_font_size = st.slider(
                 "Font Size",
                 min_value=12,
                 max_value=48,
-                value=18,
+                value=st.session_state.get('subtitle_font_size', 28),
                 step=2,
+                key="subtitle_font_size_slider",
                 help="Size of the subtitle text in pixels"
             )
+            # Store in session state
+            st.session_state.subtitle_font_size = subtitle_font_size
         
         with col2:
             local_fonts = scan_local_fonts()
@@ -1035,14 +1317,44 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             # Add local fonts to the options if not already there
             for f in local_fonts:
                 if f not in font_options:
-                    font_options.insert(1, f) # Put them near the top
+                    font_options.insert(0, f) # Put local fonts at the top (Gotham-Medium will be first)
             
+            # Initialize session state font selection if not set
+            if 'selected_font_family' not in st.session_state or st.session_state.selected_font_family is None:
+                # First time - default to Gotham-Medium if available, otherwise Arial
+                if "Gotham-Medium" in font_options:
+                    st.session_state.selected_font_family = "Gotham-Medium"
+                else:
+                    st.session_state.selected_font_family = "Arial"
+            
+            # Ensure stored font is in the options list (fallback if font was removed)
+            if st.session_state.selected_font_family not in font_options:
+                if "Gotham-Medium" in font_options:
+                    st.session_state.selected_font_family = "Gotham-Medium"
+                elif font_options:
+                    st.session_state.selected_font_family = font_options[0]
+                else:
+                    st.session_state.selected_font_family = "Arial"
+            
+            # Safely get the index
+            try:
+                default_index = font_options.index(st.session_state.selected_font_family)
+            except ValueError:
+                # Font not in list, use first available
+                default_index = 0
+                st.session_state.selected_font_family = font_options[0] if font_options else "Arial"
+            
+            # Use selectbox with key parameter - Streamlit will maintain the value automatically
             subtitle_font_family = st.selectbox(
                 "Font Family",
                 options=font_options,
-                index=0,
+                index=default_index,
+                key="font_family_selectbox",
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
+            
+            # Always update session state with the current selection
+            st.session_state.selected_font_family = subtitle_font_family
         
         # Subtitle color and outline options
         st.markdown("#### Appearance")
@@ -1125,6 +1437,7 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             # Set a placeholder that will be updated during generation
             subtitle_font_family = "Custom Font (extracted during generation)"
         
+<<<<<<< HEAD
         # Determine fonts_dir for FFmpeg
         # If we uploaded a file, it will use a temp dir (handled in the generation logic)
         # If we selected a font that exists in our local fonts/ folder, we use that folder
@@ -1214,6 +1527,16 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         </p>
         """
         st.markdown(preview_html, unsafe_allow_html=True)
+=======
+        # Determine fonts_dir for FFmpeg (now local_fonts is defined)
+        # Store in session state so it's available during video generation
+        # Only set fonts_dir if it's actually a local font, otherwise clear it
+        if subtitle_font_family and subtitle_font_family in local_fonts:
+            st.session_state.subtitle_fonts_dir = "fonts"
+        else:
+            # Clear fonts_dir for system fonts
+            st.session_state.subtitle_fonts_dir = None
+>>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
     
     # Validation
     if not add_dubbing and not add_subtitles:
@@ -1234,10 +1557,8 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         
         with st.spinner(f"Generating video with {desc_text} (this may take a few minutes)..."):
             # Create temporary files
-            temp_audio = None
             temp_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
             temp_output.close()
-            temp_srt = None
             
             # Step 1: Create dubbed audio if requested
             audio_path = None
@@ -1246,14 +1567,11 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
                 temp_audio.close()
                 
-                if create_dubbed_audio(
+                if create_dubbed_audio_elevenlabs(
                     st.session_state.translated_script,
-                    selected_voice_code,
                     total_duration,
                     temp_audio.name,
-                    selected_tld,
-                    selected_tts_provider,
-                    selected_edge_voice,
+                    selected_elevenlabs_voice_id,
                     max_speed_factor,
                     allow_extension
                 ):
@@ -1267,24 +1585,26 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             
             # Only proceed if dubbing succeeded (or if no dubbing was requested)
             if dubbing_success:
-                # Step 2: Generate subtitles if requested
+                # Step 2: Determine font settings and generate subtitles if requested
                 subtitle_path = None
-                if add_subtitles:
-                    temp_srt = tempfile.NamedTemporaryFile(delete=False, suffix='.srt', mode='w')
-                    temp_srt.close()
-                    if generate_srt_subtitles(st.session_state.translated_script, temp_srt.name):
-                        subtitle_path = temp_srt.name
-                        st.success("✅ Subtitles generated!")
-                    else:
-                        st.warning("⚠️ Failed to generate subtitles, continuing without them.")
-            
-                # Step 3: Combine video with audio and/or subtitles
-                fonts_dir = default_fonts_dir if 'default_fonts_dir' in locals() else None
+                # Get fonts_dir and font family from session state (set during subtitle customization)
+                fonts_dir = st.session_state.get('subtitle_fonts_dir', None)
+                # Get the selected font family from session state
+                subtitle_font_family = st.session_state.get('selected_font_family', 'Arial')
+                final_font_family = subtitle_font_family  # Start with selected font
                 
-                # Handling Custom Fonts vs System Fonts
+                # Track if fonts_dir is a temporary directory (should be cleaned up)
+                is_temp_fonts_dir = False
+                
+                # Check if this is actually a local font (scan again to be sure)
+                local_fonts_check = scan_local_fonts()
+                is_local_font = subtitle_font_family in local_fonts_check
+                
+                # Handling Custom Fonts vs Local Fonts vs System Fonts (determine final font name BEFORE generating subtitles)
                 if add_subtitles and custom_font_file:
                     # Case 1: User uploaded a custom font
                     fonts_dir = tempfile.mkdtemp()
+                    is_temp_fonts_dir = True  # Mark as temporary
                     font_path = os.path.join(fonts_dir, custom_font_file.name)
                     with open(font_path, "wb") as f:
                         f.write(custom_font_file.getbuffer())
@@ -1292,14 +1612,41 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     # EXTRACT CORRECT FONT NAME
                     extracted_name = get_font_name(font_path)
                     if extracted_name:
-                        subtitle_font_family = extracted_name
-                        st.info(f"ℹ️ Extracted internal font name: **{subtitle_font_family}**")
+                        final_font_family = extracted_name
+                        st.info(f"ℹ️ Extracted internal font name: **{final_font_family}**")
                     else:
-                        subtitle_font_family = os.path.splitext(custom_font_file.name)[0]
-                        st.warning(f"⚠️ Could not extract internal font name. Using filename: {subtitle_font_family}")
+                        final_font_family = os.path.splitext(custom_font_file.name)[0]
+                        st.warning(f"⚠️ Could not extract internal font name. Using filename: {final_font_family}")
                 
-                elif add_subtitles and not fonts_dir:
-                    # Case 2: No custom font uploaded, and not using a local project font.
+                elif add_subtitles and fonts_dir and os.path.exists(fonts_dir) and is_local_font:
+                    # Case 2: Using a local font from the fonts/ directory
+                    # Find the font file matching the selected font name
+                    fonts_dir_path = Path(fonts_dir)
+                    font_file = None
+                    # Try both .ttf and .otf extensions
+                    for ext in [".ttf", ".otf"]:
+                        potential_file = fonts_dir_path / (subtitle_font_family + ext)
+                        if potential_file.exists():
+                            font_file = potential_file
+                            break
+                    
+                    if font_file:
+                        # Extract the internal font name from the local font file
+                        extracted_name = get_font_name(str(font_file))
+                        if extracted_name:
+                            final_font_family = extracted_name
+                            st.info(f"ℹ️ Using local font: **{final_font_family}**")
+                        else:
+                            # Fall back to filename if extraction fails
+                            final_font_family = subtitle_font_family
+                            st.warning(f"⚠️ Could not extract internal font name from local font. Using filename: {final_font_family}")
+                    else:
+                        # Font file not found, keep the selected name as-is
+                        final_font_family = subtitle_font_family
+                        st.warning(f"⚠️ Font file not found for '{subtitle_font_family}'. Using name as-is.")
+                
+                elif add_subtitles:
+                    # Case 3: No custom font uploaded, and not using a local project font.
                     # We are using a standard system font (e.g. Arial, Times New Roman).
                     # We MUST tell FFmpeg where the system fonts are, or it won't find them.
                     import platform
@@ -1310,18 +1657,34 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                         fonts_dir = "/System/Library/Fonts"
                     elif system == "Linux":
                          fonts_dir = "/usr/share/fonts"
+            
+                # Generate subtitles with ASS format (embeds font styling directly)
+                if add_subtitles:
+                    temp_ass = tempfile.NamedTemporaryFile(delete=False, suffix='.ass', mode='w')
+                    temp_ass.close()
+                    if generate_ass_subtitles(st.session_state.translated_script, temp_ass.name, final_font_family, subtitle_font_size):
+                        subtitle_path = temp_ass.name
+                        st.success("✅ Subtitles generated!")
+                    else:
+                        st.warning("⚠️ Failed to generate subtitles, continuing without them.")
                          
+                # Step 3: Combine video with audio and/or subtitles
                 if combine_video_audio(
                     st.session_state.original_video_path,
                     audio_path,  # Will be None if no dubbing, which means keep original audio
                     temp_output.name,
                     subtitle_path,
                     subtitle_font_size,
+<<<<<<< HEAD
                     subtitle_font_family,
                     fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None),
                     subtitle_color,
                     outline_width,
                     outline_color
+=======
+                    final_font_family,
+                    fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None)
+>>>>>>> 57b306279f341732a90536e6141a01c2b6da8c8f
                 ):
                     st.success("✅ Video generation complete!")
                     
@@ -1361,11 +1724,17 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 # Cleanup
                 if temp_audio and os.path.exists(temp_audio.name):
                     os.unlink(temp_audio.name)
-                if temp_srt and os.path.exists(temp_srt.name):
-                    os.unlink(temp_srt.name)
-                if fonts_dir and os.path.exists(fonts_dir):
+                if subtitle_path and os.path.exists(subtitle_path):
+                    os.unlink(subtitle_path)
+                # Only delete fonts_dir if it's a temporary directory (custom font upload)
+                # Don't delete the actual "fonts" folder or system font directories
+                if fonts_dir and os.path.exists(fonts_dir) and is_temp_fonts_dir:
                     import shutil
-                    shutil.rmtree(fonts_dir)
+                    try:
+                        shutil.rmtree(fonts_dir)
+                    except (PermissionError, OSError) as e:
+                        # If cleanup fails, log but don't crash
+                        st.warning(f"⚠️ Could not clean up temporary font directory: {str(e)}")
 
 # Sidebar with instructions
 with st.sidebar:
@@ -1376,7 +1745,7 @@ with st.sidebar:
     2. **Transcribe**: Click "Transcribe Video" to extract and transcribe audio
     3. **Translate**: Select target language and click "Translate Script"
     4. **Edit**: Review and edit the translated text as needed
-    5. **Generate**: Click "Generate Dubbed Video" to create the final output
-    6. **Download**: Download your translated and dubbed video
+    5. **Generate**: Click "Generate Video" to create the final output with dubbing and/or subtitles
+    6. **Download**: Download your translated video with dubbing and subtitles
     """)
 
