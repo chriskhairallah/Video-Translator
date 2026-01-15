@@ -670,7 +670,7 @@ def generate_srt_subtitles(script: List[Dict], output_path: str) -> bool:
         st.error(f"SRT generation error: {str(e)}")
         return False
 
-def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None) -> bool:
+def combine_video_audio(video_path: str, audio_path: str, output_path: str, subtitle_path: str = None, subtitle_font_size: int = 18, subtitle_font_family: str = "Arial", fonts_dir: str = None, subtitle_color: str = "&Hffffff", outline_width: int = 0, outline_color: str = "&H000000") -> bool:
     """Combine video with optional new audio track and/or subtitles using FFmpeg"""
     try:
         # Build filter complex for subtitles if needed
@@ -693,7 +693,7 @@ def combine_video_audio(video_path: str, audio_path: str, output_path: str, subt
                 abs_fonts_dir = os.path.abspath(fonts_dir).replace('\\', '/').replace(":", "\\:").replace("'", "'\\''")
                 subtitle_filter += f":fontsdir='{abs_fonts_dir}'"
                 
-            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour=&Hffffff,OutlineColour=&H000000,Bold=1,Italic=0,Alignment=2,Outline=0,Shadow=0,BorderStyle=1,MarginV=30'"
+            subtitle_filter += f":force_style='FontName={subtitle_font_family},FontSize={subtitle_font_size},PrimaryColour={subtitle_color},OutlineColour={outline_color},Bold=1,Italic=0,Alignment=2,Outline={outline_width},Shadow=0,BorderStyle=1,MarginV=30'"
             video_filters.append(subtitle_filter)
         
         # Build FFmpeg command
@@ -1011,6 +1011,9 @@ if st.session_state.translated_script and st.session_state.original_video_path:
     # Subtitle customization options
     subtitle_font_size = 18
     subtitle_font_family = "Arial"
+    subtitle_color = "&Hffffff"  # Default: white
+    outline_width = 2  # Default: 2px outline
+    outline_color = "&H000000"  # Default: black
     if add_subtitles:
         st.markdown("### Subtitle Customization")
         
@@ -1040,6 +1043,73 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                 index=0,
                 help="Font family for the subtitles. Detected local fonts from the 'fonts/' folder are included."
             )
+        
+        # Subtitle color and outline options
+        st.markdown("#### Appearance")
+        col3, col4, col5 = st.columns(3)
+        
+        with col3:
+            # Color picker with common presets
+            color_preset = st.selectbox(
+                "Text Color",
+                options=["White", "Black", "Yellow", "Red", "Green", "Blue", "Custom"],
+                index=0,
+                help="Select subtitle text color. White works best on dark backgrounds, Black on light backgrounds."
+            )
+            
+            # Map color names to ASS/SSA hex format (note: format is AABBGGRR in hex)
+            color_map = {
+                "White": "&Hffffff",
+                "Black": "&H000000",
+                "Yellow": "&H00ffff",
+                "Red": "&H0000ff",
+                "Green": "&H00ff00",
+                "Blue": "&Hff0000"
+            }
+            
+            if color_preset == "Custom":
+                custom_color = st.color_picker("Pick a color", "#FFFFFF")
+                # Convert hex color #RRGGBB to ASS format &HBBGGRR
+                r = custom_color[1:3]
+                g = custom_color[3:5]
+                b = custom_color[5:7]
+                subtitle_color = f"&H{b}{g}{r}"
+            else:
+                subtitle_color = color_map[color_preset]
+        
+        with col4:
+            outline_width = st.slider(
+                "Outline Width",
+                min_value=0,
+                max_value=8,
+                value=2,
+                step=1,
+                help="Border outline width in pixels. Use 2-4 for better readability on any background. 0 = no outline."
+            )
+        
+        with col5:
+            outline_preset = st.selectbox(
+                "Outline Color",
+                options=["Black", "White", "Gray", "Custom"],
+                index=0,
+                help="Outline color. Black outline works best with white text, white outline with black text."
+            )
+            
+            outline_color_map = {
+                "Black": "&H000000",
+                "White": "&Hffffff",
+                "Gray": "&H808080"
+            }
+            
+            if outline_preset == "Custom":
+                custom_outline = st.color_picker("Pick outline color", "#000000")
+                # Convert hex color to ASS format
+                r = custom_outline[1:3]
+                g = custom_outline[3:5]
+                b = custom_outline[5:7]
+                outline_color = f"&H{b}{g}{r}"
+            else:
+                outline_color = outline_color_map[outline_preset]
         
         # Font uploader
         custom_font_file = st.file_uploader(
@@ -1071,10 +1141,53 @@ if st.session_state.translated_script and st.session_state.original_video_path:
         preview_font_size = int(subtitle_font_size * 1.2)  # Scale up to better match video display size
         
         # Create HTML preview with the selected style
+        # Convert ASS color format (&HBBGGRR) to CSS hex (#RRGGBB)
+        def ass_to_css_color(ass_color):
+            if ass_color.startswith("&H"):
+                hex_val = ass_color[2:]  # Remove &H prefix
+                if len(hex_val) == 6:
+                    # ASS format is BBGGRR, CSS is RRGGBB
+                    b = hex_val[0:2]
+                    g = hex_val[2:4]
+                    r = hex_val[4:6]
+                    return f"#{r}{g}{b}"
+            return "#ffffff"  # Default to white
+        
+        preview_text_color = ass_to_css_color(subtitle_color)
+        preview_outline_color = ass_to_css_color(outline_color)
+        
+        # Build text-shadow for outline effect
+        outline_shadow = ""
+        if outline_width > 0:
+            # Create multiple shadows for outline effect
+            shadows = []
+            for x in range(-outline_width, outline_width + 1):
+                for y in range(-outline_width, outline_width + 1):
+                    if x != 0 or y != 0:
+                        shadows.append(f"{x}px {y}px 0 {preview_outline_color}")
+            outline_shadow = ", ".join(shadows)
+        else:
+            outline_shadow = "none"
+        
         # Using a container that simulates video aspect ratio for better accuracy
+        # Add toggle for background preview
+        preview_bg = st.radio(
+            "Preview Background",
+            options=["Dark", "Light", "Mixed"],
+            index=0,
+            horizontal=True,
+            help="Test your subtitle visibility on different backgrounds"
+        )
+        
+        bg_styles = {
+            "Dark": "background: linear-gradient(to bottom, #1a1a1a 0%, #2d2d2d 100%);",
+            "Light": "background: linear-gradient(to bottom, #e0e0e0 0%, #ffffff 100%);",
+            "Mixed": "background: linear-gradient(to right, #1a1a1a 0%, #ffffff 100%);"
+        }
+        
         preview_html = f"""
         <div style="
-            background: linear-gradient(to bottom, #1a1a1a 0%, #2d2d2d 100%);
+            {bg_styles[preview_bg]}
             padding: 40px 20px;
             border-radius: 8px;
             text-align: center;
@@ -1087,15 +1200,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
             padding-bottom: 30px;
         ">
             <p style="
-                color: white;
+                color: {preview_text_color};
                 font-family: '{subtitle_font_family}', sans-serif;
                 font-size: {preview_font_size}px;
-                text-shadow: 
-                    -1px -1px 0 #000,
-                    1px -1px 0 #000,
-                    -1px 1px 0 #000,
-                    1px 1px 0 #000,
-                    0 0 4px rgba(0, 0, 0, 0.8);
+                text-shadow: {outline_shadow};
                 margin: 0;
                 line-height: 1.2;
                 font-weight: bold;
@@ -1210,7 +1318,10 @@ if st.session_state.translated_script and st.session_state.original_video_path:
                     subtitle_path,
                     subtitle_font_size,
                     subtitle_font_family,
-                    fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None)
+                    fonts_dir if fonts_dir else (os.path.join(os.getcwd(), "fonts") if os.path.exists("fonts") else None),
+                    subtitle_color,
+                    outline_width,
+                    outline_color
                 ):
                     st.success("✅ Video generation complete!")
                     
